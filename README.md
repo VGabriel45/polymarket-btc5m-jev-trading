@@ -11,7 +11,7 @@ Dry-run agent that watches the active Polymarket **BTC Up or Down** 15m market, 
 
 ```bash
 cp .env.example .env
-# edit TYPESAFE_API_KEY if using live Jev
+# put TYPESAFE_API_KEY=… in .env (loaded automatically by npm scripts)
 npm install
 ```
 

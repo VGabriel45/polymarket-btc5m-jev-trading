@@ -7,9 +7,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "watch": "tsx src/cli/watch.ts",
-    "tick": "tsx src/cli/once.ts",
-    "once": "tsx src/cli/once.ts",
+    "watch": "tsx --env-file=.env src/cli/watch.ts",
+    "tick": "tsx --env-file=.env src/cli/once.ts",
+    "once": "tsx --env-file=.env src/cli/once.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

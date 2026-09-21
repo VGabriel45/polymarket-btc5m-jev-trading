@@ -1,8 +1,10 @@
 import { loadConfig } from "../config.js";
+import { loadDotEnv } from "../loadEnv.js";
 import { WatchSession } from "../session.js";
 import { parseCliFlags } from "./flags.js";
 
 async function main(): Promise<void> {
+  loadDotEnv();
   const flags = parseCliFlags(process.argv.slice(2));
   const cfg = loadConfig(process.env, {
     stubJudge: flags.stubJudge,
