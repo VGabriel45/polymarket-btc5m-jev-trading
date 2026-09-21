@@ -93,12 +93,23 @@ export function loadConfig(
   const tickMs = num(e.TICK_MS, 5_000);
   const staleAfterMs = num(e.STALE_AFTER_MS, 120_000);
   const liveTrading = e.LIVE_TRADING === "1" || e.LIVE_TRADING === "true";
+  const sourceName = (e.POLYMARKET_SOURCE ?? "auto").toLowerCase();
+  if (liveTrading && sourceName === "fixture") {
+    throw new Error(
+      "Refusing LIVE_TRADING with POLYMARKET_SOURCE=fixture (fake token IDs)",
+    );
+  }
   const pnlPath = resolve(e.PNL_PATH ?? defaultPnLPath());
 
   let judge: Judge;
   let spot: SpotSource;
 
   if (opts.stubJudge || opts.overrides?.judge) {
+    if (liveTrading) {
+      throw new Error(
+        "Refusing LIVE_TRADING with --stub-judge (would trade on fake signals)",
+      );
+    }
     judge =
       opts.overrides?.judge ??
       stubJudge({

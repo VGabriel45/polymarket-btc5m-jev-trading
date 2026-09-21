@@ -1,6 +1,6 @@
 # polymarket-btc5m-jev-trading — Usage (candidate 1)
 
-Dry-run agent that watches the active Polymarket **BTC Up or Down** market, feeds typed facts to TypeSafe Jev, and either logs an intended BUY or abstains. Never posts live orders.
+Dry-run by default. Live CLOB posting is opt-in via `LIVE_TRADING=1` (see root README). Wallet approvals and deposits are **not** handled by this repo; set up the wallet on Polymarket yourself.
 
 ## Install & run
 
