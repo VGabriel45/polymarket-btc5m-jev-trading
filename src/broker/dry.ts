@@ -72,12 +72,3 @@ export function applyDry(
     }
   }
 }
-
-/** Gated stub — never posts. Throws until wired behind LIVE_TRADING. */
-export class LiveBroker {
-  async apply(): Promise<never> {
-    throw new Error(
-      "LiveBroker not wired — set LIVE_TRADING unset / use dry-run (default)",
-    );
-  }
-}

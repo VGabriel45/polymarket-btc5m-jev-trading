@@ -1,5 +1,6 @@
 import { composeFacts } from "./compose.js";
-import { applyDry, LiveBroker } from "./broker/dry.js";
+import { applyDry } from "./broker/dry.js";
+import { assertDryRunOrThrow } from "./broker/live.js";
 import {
   resolveWinner,
   secondsRemaining,
@@ -52,7 +53,6 @@ export class WindowSession {
   private lastPnL: PnLRecord | null = null;
   private cumulativePnLUsd = 0;
   private stopLoop: (() => void) | null = null;
-  private readonly liveBroker = new LiveBroker();
 
   private constructor(cfg: SessionConfig) {
     this.cfg = cfg;
@@ -336,9 +336,7 @@ export class WindowSession {
     market: DomainMarket,
     at: ReturnType<typeof nowIso>,
   ): Promise<void> {
-    if (this.cfg.liveTrading) {
-      await this.liveBroker.apply();
-    }
+    assertDryRunOrThrow(this.cfg.liveTrading);
 
     const result = applyDry(this.position, action, market, at);
     this.position = result.position;
