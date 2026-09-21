@@ -1,16 +1,16 @@
-import type { DryRunPen, IntendedBuy } from "../domain.js";
+import type { DryRunPen, IntendedOrder } from "../domain.js";
 
 export class MemoryPen implements DryRunPen {
-  readonly entries: IntendedBuy[] = [];
+  readonly entries: IntendedOrder[] = [];
   private lastKey: string | null = null;
 
-  async record(intended: IntendedBuy): Promise<void> {
-    if (this.lastKey === intended.idempotencyKey) return;
-    this.lastKey = intended.idempotencyKey;
-    this.entries.push(intended);
+  async record(order: IntendedOrder): Promise<void> {
+    if (this.lastKey === order.idempotencyKey) return;
+    this.lastKey = order.idempotencyKey;
+    this.entries.push(order);
   }
 
-  tail(limit = 20): ReadonlyArray<IntendedBuy> {
+  tail(limit = 20): ReadonlyArray<IntendedOrder> {
     return this.entries.slice(-limit);
   }
 }

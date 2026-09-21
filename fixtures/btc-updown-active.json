@@ -1,9 +1,12 @@
 {
-  "eventSlug": "btc-updown-15m-fixture",
-  "question": "Bitcoin Up or Down - fixture window",
+  "eventSlug": "btc-updown-5m-fixture",
+  "question": "Bitcoin Up or Down - 5m fixture window",
   "conditionId": "0xfixtureconditionid0000000000000000000000000000000000000001",
   "endsAt": "2099-01-01T00:00:00.000Z",
   "volume24hUsd": 125000,
+  "closed": false,
+  "active": true,
+  "outcomePrices": null,
   "bySide": {
     "UP": {
       "tokenId": "1111111111111111111111111111111111111111111111111111111111111111",

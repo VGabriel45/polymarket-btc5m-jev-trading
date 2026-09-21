@@ -2,9 +2,11 @@ import type {
   DomainMarket,
   FactsForJev,
   IsoTime,
+  Position,
   Sample,
   SpotPulse,
 } from "./domain.js";
+import { secondsRemaining } from "./adapters/polymarket/wire.js";
 
 function ageMsOf(pulledAt: IsoTime, now: IsoTime): number {
   return Math.max(0, Date.parse(now) - Date.parse(pulledAt));
@@ -15,6 +17,8 @@ export function composeFacts(
   spot: Sample<SpotPulse>,
   now: IsoTime,
   staleAfterMs: number,
+  position: Position,
+  windowLengthSec: number,
 ):
   | { ok: true; facts: FactsForJev }
   | { ok: false; reason: "stale_inputs" | "actor_unhealthy"; detail: string } {
@@ -50,6 +54,14 @@ export function composeFacts(
       low24h: s.low24h,
       volume24hQuote: s.volume24hQuote,
       moveVsWindowOpenPct: s.moveVsWindowOpenPct,
+    },
+    session: {
+      secondsRemaining: secondsRemaining(m.endsAt, now),
+      windowLengthSec,
+      position:
+        position.kind === "flat"
+          ? { kind: "flat" }
+          : { kind: "open", side: position.side },
     },
     meta: {
       marketSource: market.source,

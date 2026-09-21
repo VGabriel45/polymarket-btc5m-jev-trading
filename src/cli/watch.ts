@@ -2,7 +2,7 @@ import React from "react";
 import { render } from "ink";
 import { loadConfig } from "../config.js";
 import { loadDotEnv } from "../loadEnv.js";
-import { WatchSession } from "../session.js";
+import { WindowSession } from "../session.js";
 import { App } from "../tui/App.js";
 import { parseCliFlags } from "./flags.js";
 
@@ -16,7 +16,7 @@ async function main(): Promise<void> {
     stubSide: flags.stubSide,
   });
 
-  const session = await WatchSession.open(cfg);
+  const session = await WindowSession.open(cfg);
 
   const { waitUntilExit } = render(
     React.createElement(App, {

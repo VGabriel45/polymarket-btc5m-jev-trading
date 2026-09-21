@@ -7,6 +7,7 @@ import { fixedSpotSource } from "./adapters/binance/fixed.js";
 import { typeSafeJudge } from "./adapters/jev/typesafe.js";
 import { stubJudge } from "./adapters/jev/stub.js";
 import { logPen } from "./dryrun/log-pen.js";
+import { defaultPnLPath } from "./pnl/ledger.js";
 import type { Judge, MarketSource, SessionConfig, SpotSource } from "./domain.js";
 
 export type EnvBag = {
@@ -18,6 +19,8 @@ export type EnvBag = {
   DRY_RUN_SIZE?: string;
   FIXTURE_PATH?: string;
   STALE_AFTER_MS?: string;
+  LIVE_TRADING?: string;
+  PNL_PATH?: string;
 };
 
 export type LoadConfigOptions = {
@@ -56,8 +59,10 @@ export function loadConfig(
   );
   const threshold = num(e.ACT_THRESHOLD, 0.7);
   const dryRunSize = num(e.DRY_RUN_SIZE, 10);
-  const tickMs = num(e.TICK_MS, 15_000);
+  const tickMs = num(e.TICK_MS, 10_000);
   const staleAfterMs = num(e.STALE_AFTER_MS, 120_000);
+  const liveTrading = e.LIVE_TRADING === "1" || e.LIVE_TRADING === "true";
+  const pnlPath = resolve(e.PNL_PATH ?? defaultPnLPath());
 
   let judge: Judge;
   let spot: SpotSource;
@@ -104,5 +109,8 @@ export function loadConfig(
     dryRunSize: opts.overrides?.dryRunSize ?? dryRunSize,
     tickMs: opts.overrides?.tickMs ?? tickMs,
     staleAfterMs: opts.overrides?.staleAfterMs ?? staleAfterMs,
+    windowLengthSec: opts.overrides?.windowLengthSec ?? 300,
+    pnlPath: opts.overrides?.pnlPath ?? pnlPath,
+    liveTrading: opts.overrides?.liveTrading ?? liveTrading,
   };
 }

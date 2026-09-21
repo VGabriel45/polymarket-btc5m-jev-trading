@@ -2,7 +2,7 @@ export type Confidence = number & { readonly __brand: "Confidence" };
 
 /**
  * Confidence strictly greater than the session threshold (default 0.70).
- * Only constructible via gate(); ACT verdicts require this brand.
+ * Only constructible via gate(); ENTER/HOLD/SWITCH require this brand.
  */
 export type HighConfidence = Confidence & { readonly __high: "HighConfidence" };
 
@@ -47,6 +47,10 @@ export type DomainMarket = {
   conditionId: string;
   endsAt: IsoTime | null;
   volume24hUsd: number;
+  closed: boolean;
+  active: boolean;
+  /** Parallel to Up/Down outcomes when Gamma provides them; used at settle. */
+  outcomePrices: { UP: number | null; DOWN: number | null } | null;
   bySide: Record<
     Side,
     {
@@ -75,6 +79,71 @@ export type ActorHealth =
   | { ok: true }
   | { ok: false; code: "transport" | "parse" | "empty" | "stale"; detail: string };
 
+export type WindowPhase = "awaiting_window" | "trading" | "settling" | "recorded";
+
+export type Position =
+  | { kind: "flat" }
+  | {
+      kind: "open";
+      side: Side;
+      tokenId: TokenId;
+      size: number;
+      entryPrice: number;
+      openedAt: IsoTime;
+      slug: string;
+    };
+
+export type IntendedOrder = {
+  side: "BUY" | "SELL";
+  tokenId: TokenId;
+  outcome: Side;
+  price: number;
+  size: number;
+  at: IsoTime;
+  idempotencyKey: string;
+  rationale: string;
+};
+
+export type AbstainReason =
+  | { code: "LOW_CONFIDENCE"; side: Side; confidence: Confidence }
+  | { code: "WORLD_INCOMPLETE"; missing: ReadonlyArray<"market" | "spot"> }
+  | { code: "JUDGE_FAILED"; message: string }
+  | { code: "MARKET_UNAVAILABLE"; message: string }
+  | { code: "STALE_INPUTS"; detail: string }
+  | { code: "AWAITING_WINDOW"; detail: string }
+  | { code: "SETTLING"; detail: string };
+
+export type TradeAction =
+  | { kind: "ABSTAIN"; reason: AbstainReason }
+  | { kind: "ENTER"; side: Side; confidence: HighConfidence; order: IntendedOrder }
+  | { kind: "HOLD"; side: Side; confidence: HighConfidence }
+  | {
+      kind: "EXIT";
+      side: Side;
+      order: IntendedOrder;
+      reason: "low_confidence" | "window_end" | "switch";
+    }
+  | {
+      kind: "SWITCH";
+      from: Side;
+      to: Side;
+      confidence: HighConfidence;
+      exit: IntendedOrder;
+      enter: IntendedOrder;
+    };
+
+export type PnLRecord = {
+  slug: string;
+  settledAt: IsoTime;
+  winner: Side | null;
+  positionSide: Side | null;
+  entryPrice: number | null;
+  exitPrice: number | null;
+  size: number;
+  pnlUsd: number;
+  mode: "dry-run";
+};
+
 export type FactsForJev = {
   market: {
     slug: string;
@@ -92,6 +161,11 @@ export type FactsForJev = {
     volume24hQuote: number;
     moveVsWindowOpenPct: number;
   };
+  session: {
+    secondsRemaining: number | null;
+    windowLengthSec: number;
+    position: { kind: "flat" } | { kind: "open"; side: Side };
+  };
   meta: {
     marketSource: "live" | "fixture" | "stub";
     spotSource: "live" | "fixture" | "stub";
@@ -104,36 +178,6 @@ export type JudgeOpinion = {
   confidence: Confidence;
   probs?: { UP: number; DOWN: number };
 };
-
-export type IntendedBuy = {
-  side: "BUY";
-  tokenId: TokenId;
-  outcome: Side;
-  price: number;
-  size: number;
-  rationale: string;
-  at: IsoTime;
-  idempotencyKey: string;
-};
-
-export type AbstainReason =
-  | { code: "LOW_CONFIDENCE"; side: Side; confidence: Confidence }
-  | { code: "WORLD_INCOMPLETE"; missing: ReadonlyArray<"market" | "spot"> }
-  | { code: "JUDGE_FAILED"; message: string }
-  | { code: "MARKET_UNAVAILABLE"; message: string }
-  | { code: "STALE_INPUTS"; detail: string };
-
-export type Verdict =
-  | {
-      kind: "ACT";
-      side: Side;
-      confidence: HighConfidence;
-      intended: IntendedBuy;
-    }
-  | {
-      kind: "ABSTAIN";
-      reason: AbstainReason;
-    };
 
 export interface MarketSource {
   pullActiveBtcUpDown(): Promise<Sample<DomainMarket>>;
@@ -148,9 +192,9 @@ export interface Judge {
 }
 
 export interface DryRunPen {
-  record(intended: IntendedBuy): Promise<void>;
+  record(order: IntendedOrder): Promise<void>;
   /** Recent recorded intents for TUI / snapshot (newest last). */
-  tail?(limit?: number): ReadonlyArray<IntendedBuy>;
+  tail?(limit?: number): ReadonlyArray<IntendedOrder>;
 }
 
 export type SessionConfig = {
@@ -162,17 +206,32 @@ export type SessionConfig = {
   dryRunSize: number;
   tickMs: number;
   staleAfterMs: number;
+  windowLengthSec: number;
+  pnlPath: string;
+  liveTrading: boolean;
+};
+
+export type PnLSummary = {
+  count: number;
+  cumulativeUsd: number;
+  last: PnLRecord | null;
 };
 
 export type TickSnapshot = {
   tickId: number;
   at: IsoTime;
+  phase: WindowPhase;
+  secondsRemaining: number | null;
+  position: Position;
+  action: TradeAction;
   market: {
     slug: string;
     question: string;
     upMid: number;
     downMid: number;
     volume24hUsd: number;
+    closed: boolean;
+    active: boolean;
     source: Sample<DomainMarket>["source"];
   } | null;
   btc: {
@@ -187,7 +246,8 @@ export type TickSnapshot = {
   };
   factsPreview: FactsForJev | null;
   opinion: JudgeOpinion | null;
-  verdict: Verdict;
-  lastIntended: IntendedBuy | null;
-  intentLogTail: ReadonlyArray<IntendedBuy>;
+  lastOrder: IntendedOrder | null;
+  intentLogTail: ReadonlyArray<IntendedOrder>;
+  lastPnL: PnLRecord | null;
+  cumulativePnLUsd: number;
 };

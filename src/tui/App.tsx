@@ -2,12 +2,15 @@ import React, { useEffect, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import type { TickSnapshot } from "../domain.js";
 import {
+  ActionPanel,
   BtcPanel,
   HealthPanel,
   IntentLogPanel,
   MarketPanel,
   OpinionPanel,
-  VerdictPanel,
+  PhasePanel,
+  PnLPanel,
+  PositionPanel,
 } from "./panels.js";
 
 export type AppProps = {
@@ -39,8 +42,13 @@ export function App({ subscribe }: AppProps): React.ReactElement {
     <Box flexDirection="column" padding={1} gap={1}>
       <Text bold color="whiteBright">
         btc-updown-jev{" "}
-        <Text dimColor>dry-run · never posts · press q to quit</Text>
+        <Text dimColor>5m dry-run · never posts · press q to quit</Text>
       </Text>
+      <Box gap={1}>
+        <PhasePanel snap={snap} />
+        <PositionPanel snap={snap} />
+        <PnLPanel snap={snap} />
+      </Box>
       <Box gap={1}>
         <MarketPanel snap={snap} />
         <BtcPanel snap={snap} />
@@ -49,7 +57,7 @@ export function App({ subscribe }: AppProps): React.ReactElement {
       <Box gap={1}>
         <OpinionPanel snap={snap} />
       </Box>
-      <VerdictPanel snap={snap} />
+      <ActionPanel snap={snap} />
       <IntentLogPanel snap={snap} />
     </Box>
   );

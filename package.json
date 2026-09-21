@@ -10,6 +10,7 @@
     "watch": "tsx --env-file=.env src/cli/watch.ts",
     "tick": "tsx --env-file=.env src/cli/once.ts",
     "once": "tsx --env-file=.env src/cli/once.ts",
+    "smoke:policy": "tsx scripts/smoke-policy.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

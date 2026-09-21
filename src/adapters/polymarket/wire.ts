@@ -1,4 +1,10 @@
-import { asIsoTime, asTokenId, type DomainMarket, type Side } from "../../domain.js";
+import {
+  asIsoTime,
+  asTokenId,
+  type DomainMarket,
+  type IsoTime,
+  type Side,
+} from "../../domain.js";
 
 export type GammaMarketWire = {
   question?: string;
@@ -6,15 +12,20 @@ export type GammaMarketWire = {
   condition_id?: string;
   clobTokenIds?: string | string[];
   outcomes?: string | string[];
+  outcomePrices?: string | string[] | number[];
   endDate?: string;
   end_date_iso?: string;
   volume24hr?: number | string;
   volume_24hr?: number | string;
+  closed?: boolean;
+  active?: boolean;
 };
 
 export type GammaEventWire = {
   slug?: string;
   title?: string;
+  closed?: boolean;
+  active?: boolean;
   markets?: GammaMarketWire[];
 };
 
@@ -26,7 +37,9 @@ export type ClobSideQuotes = {
   bestAsk: number | null;
 };
 
-function parseJsonArray(v: string | string[] | undefined): string[] {
+const WINDOW_SEC = 300;
+
+function parseJsonArray(v: string | string[] | number[] | undefined): string[] {
   if (v == null) return [];
   if (Array.isArray(v)) return v.map(String);
   try {
@@ -50,9 +63,73 @@ function classifyOutcome(label: string): Side | null {
   return null;
 }
 
+/** Active Polymarket BTC Up/Down 5-minute window slug. */
 export function activeBtcUpDownSlug(nowMs = Date.now()): string {
-  const windowSec = Math.floor(nowMs / 1000 / 900) * 900;
-  return `btc-updown-15m-${windowSec}`;
+  const windowSec = Math.floor(nowMs / 1000 / WINDOW_SEC) * WINDOW_SEC;
+  return `btc-updown-5m-${windowSec}`;
+}
+
+export function secondsRemaining(
+  endsAt: IsoTime | string | null,
+  now: IsoTime | string | number = Date.now(),
+): number | null {
+  if (endsAt == null) return null;
+  const endMs = Date.parse(String(endsAt));
+  if (!Number.isFinite(endMs)) return null;
+  const nowMs = typeof now === "number" ? now : Date.parse(String(now));
+  if (!Number.isFinite(nowMs)) return null;
+  return Math.max(0, Math.floor((endMs - nowMs) / 1000));
+}
+
+export function windowHasEnded(
+  market: DomainMarket,
+  now: IsoTime | string | number = Date.now(),
+): boolean {
+  if (market.closed) return true;
+  const rem = secondsRemaining(market.endsAt, now);
+  return rem !== null && rem <= 0;
+}
+
+/**
+ * Resolve binary winner from Gamma outcomePrices / closed mids.
+ * Winning share price ≈ 1, losing ≈ 0.
+ */
+export function resolveWinner(market: DomainMarket): Side | null {
+  const prices = market.outcomePrices;
+  if (prices) {
+    const up = prices.UP;
+    const down = prices.DOWN;
+    if (up != null && down != null) {
+      if (up >= 0.95 && down <= 0.05) return "UP";
+      if (down >= 0.95 && up <= 0.05) return "DOWN";
+      if (up > down && up >= 0.7) return "UP";
+      if (down > up && down >= 0.7) return "DOWN";
+    }
+  }
+  if (market.closed) {
+    const upMid = market.bySide.UP.mid;
+    const downMid = market.bySide.DOWN.mid;
+    if (upMid >= 0.95 && downMid <= 0.05) return "UP";
+    if (downMid >= 0.95 && upMid <= 0.05) return "DOWN";
+  }
+  return null;
+}
+
+function mapOutcomePrices(
+  outcomes: string[],
+  rawPrices: string[],
+): DomainMarket["outcomePrices"] {
+  if (rawPrices.length === 0) return null;
+  const mapped: { UP: number | null; DOWN: number | null } = {
+    UP: null,
+    DOWN: null,
+  };
+  for (let i = 0; i < outcomes.length; i++) {
+    const side = classifyOutcome(outcomes[i]!);
+    if (!side) continue;
+    mapped[side] = toNum(rawPrices[i]);
+  }
+  return mapped;
 }
 
 /**
@@ -104,6 +181,9 @@ export function domainMarketFromGamma(
 
   const endsRaw = market.endDate ?? market.end_date_iso ?? null;
   const vol = toNum(market.volume24hr ?? market.volume_24hr) ?? 0;
+  const priceRaw = parseJsonArray(market.outcomePrices);
+  const closed = Boolean(market.closed ?? event.closed ?? false);
+  const active = market.active ?? event.active ?? !closed;
 
   return {
     eventSlug: event.slug ?? "unknown",
@@ -111,6 +191,9 @@ export function domainMarketFromGamma(
     conditionId: String(market.conditionId ?? market.condition_id ?? ""),
     endsAt: endsRaw ? asIsoTime(endsRaw) : null,
     volume24hUsd: vol,
+    closed,
+    active: Boolean(active),
+    outcomePrices: mapOutcomePrices(outcomes, priceRaw),
     bySide,
   };
 }
@@ -127,6 +210,9 @@ export function domainMarketFromDomainJson(raw: unknown): DomainMarket {
     conditionId: o.conditionId,
     endsAt: o.endsAt ? asIsoTime(o.endsAt) : null,
     volume24hUsd: o.volume24hUsd,
+    closed: Boolean(o.closed ?? false),
+    active: o.active !== false,
+    outcomePrices: o.outcomePrices ?? null,
     bySide: {
       UP: {
         ...o.bySide.UP,

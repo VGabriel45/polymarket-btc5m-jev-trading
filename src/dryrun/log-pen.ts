@@ -1,28 +1,25 @@
-import type { DryRunPen, IntendedBuy } from "../domain.js";
+import type { DryRunPen, IntendedOrder } from "../domain.js";
 
 export function logPen(opts?: { debounceMs?: number }): DryRunPen {
   const debounceMs = opts?.debounceMs ?? 60_000;
-  const log: IntendedBuy[] = [];
+  const log: IntendedOrder[] = [];
   let lastKey: string | null = null;
   let lastAt = 0;
 
   return {
-    async record(intended: IntendedBuy): Promise<void> {
+    async record(order: IntendedOrder): Promise<void> {
       const now = Date.now();
-      if (
-        lastKey === intended.idempotencyKey &&
-        now - lastAt < debounceMs
-      ) {
+      if (lastKey === order.idempotencyKey && now - lastAt < debounceMs) {
         return;
       }
-      lastKey = intended.idempotencyKey;
+      lastKey = order.idempotencyKey;
       lastAt = now;
-      log.push(intended);
+      log.push(order);
       console.error(
-        `[dry-run] BUY ${intended.outcome} size=${intended.size} price=${intended.price} key=${intended.idempotencyKey}`,
+        `[dry-run] ${order.side} ${order.outcome} size=${order.size} price=${order.price} key=${order.idempotencyKey}`,
       );
     },
-    tail(limit = 20): ReadonlyArray<IntendedBuy> {
+    tail(limit = 20): ReadonlyArray<IntendedOrder> {
       return log.slice(-limit);
     },
   };

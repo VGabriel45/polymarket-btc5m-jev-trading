@@ -1,6 +1,6 @@
 import { loadConfig } from "../config.js";
 import { loadDotEnv } from "../loadEnv.js";
-import { WatchSession } from "../session.js";
+import { WindowSession } from "../session.js";
 import { parseCliFlags } from "./flags.js";
 
 async function main(): Promise<void> {
@@ -13,7 +13,7 @@ async function main(): Promise<void> {
     stubSide: flags.stubSide,
   });
 
-  const session = await WatchSession.open(cfg);
+  const session = await WindowSession.open(cfg);
   const snap = await session.tick();
   console.log(JSON.stringify(snap, null, 2));
   await session.close();
