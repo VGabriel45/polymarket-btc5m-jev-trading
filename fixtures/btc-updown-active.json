@@ -1,0 +1,27 @@
+{
+  "eventSlug": "btc-updown-15m-fixture",
+  "question": "Bitcoin Up or Down - fixture window",
+  "conditionId": "0xfixtureconditionid0000000000000000000000000000000000000001",
+  "endsAt": "2099-01-01T00:00:00.000Z",
+  "volume24hUsd": 125000,
+  "bySide": {
+    "UP": {
+      "tokenId": "1111111111111111111111111111111111111111111111111111111111111111",
+      "outcomeLabel": "Up",
+      "mid": 0.54,
+      "bestBid": 0.53,
+      "bestAsk": 0.55,
+      "spread": 0.02,
+      "lastTrade": 0.54
+    },
+    "DOWN": {
+      "tokenId": "2222222222222222222222222222222222222222222222222222222222222222",
+      "outcomeLabel": "Down",
+      "mid": 0.46,
+      "bestBid": 0.45,
+      "bestAsk": 0.47,
+      "spread": 0.02,
+      "lastTrade": 0.46
+    }
+  }
+}
