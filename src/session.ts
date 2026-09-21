@@ -19,9 +19,6 @@ type ActorSlot<T> = {
   health: ActorHealth;
 };
 
-/**
- * Sole deep public surface. Holds two private Sample slots; merge only in tick().
- */
 export class WatchSession {
   private readonly cfg: SessionConfig;
   private readonly market: ActorSlot<DomainMarket> = {

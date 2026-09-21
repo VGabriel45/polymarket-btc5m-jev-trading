@@ -10,9 +10,6 @@ function ageMsOf(pulledAt: IsoTime, now: IsoTime): number {
   return Math.max(0, Date.parse(now) - Date.parse(pulledAt));
 }
 
-/**
- * Merge actor samples at the read boundary. Wire types never reach here.
- */
 export function composeFacts(
   market: Sample<DomainMarket>,
   spot: Sample<SpotPulse>,

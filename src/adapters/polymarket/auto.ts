@@ -3,9 +3,6 @@ import { fixtureMarketSource } from "./fixture.js";
 import { liveMarketSource } from "./live.js";
 import { isTransportFailure } from "./wire.js";
 
-/**
- * Try live Gamma/CLOB; on transport failure (incl. HTTP 000), sticky-switch to fixture.
- */
 export function autoMarketSource(opts: {
   slugOverride?: string;
   fixturePath: string;

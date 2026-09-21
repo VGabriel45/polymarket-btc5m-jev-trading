@@ -9,6 +9,7 @@ async function main(): Promise<void> {
   const flags = parseCliFlags(process.argv.slice(2));
   const cfg = loadConfig(process.env, {
     stubJudge: flags.stubJudge,
+    fixedSpot: flags.fixedSpot,
     stubConfidence: flags.stubConfidence,
     stubSide: flags.stubSide,
   });

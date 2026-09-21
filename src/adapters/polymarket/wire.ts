@@ -1,7 +1,5 @@
 import { asIsoTime, asTokenId, type DomainMarket, type Side } from "../../domain.js";
 
-/** Gamma / CLOB wire shapes — never leave this module. */
-
 export type GammaMarketWire = {
   question?: string;
   conditionId?: string;
@@ -142,23 +140,27 @@ export function domainMarketFromDomainJson(raw: unknown): DomainMarket {
   };
 }
 
+export class TransportError extends Error {
+  readonly kind = "transport" as const;
+  readonly status: number;
+  readonly code?: string;
+
+  constructor(message: string, opts?: { status?: number; code?: string; cause?: unknown }) {
+    super(message, opts?.cause !== undefined ? { cause: opts.cause } : undefined);
+    this.name = "TransportError";
+    this.status = opts?.status ?? 0;
+    this.code = opts?.code;
+  }
+}
+
 export function isTransportFailure(err: unknown): boolean {
+  if (err instanceof TransportError) return err.status === 0;
   if (err == null) return false;
-  const msg = err instanceof Error ? err.message : String(err);
   const code =
     typeof err === "object" && err !== null && "code" in err
       ? String((err as { code: unknown }).code)
       : "";
-  // HTTP 000 class / DNS / connect refused / abort — sticky fallback triggers
-  if (/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|fetch failed|network|HTTP 000/i.test(msg)) {
-    return true;
-  }
-  if (/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|UND_ERR/.test(code)) return true;
-  if (typeof err === "object" && err !== null && "status" in err) {
-    const status = Number((err as { status: unknown }).status);
-    if (status === 0) return true;
-  }
-  return false;
+  return /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|UND_ERR/.test(code);
 }
 
 export async function fetchJson(
@@ -172,14 +174,18 @@ export async function fetchJson(
       signal: init?.signal ?? AbortSignal.timeout(12_000),
     });
   } catch (e) {
-    const err = e instanceof Error ? e : new Error(String(e));
-    (err as Error & { status?: number }).status = 0;
-    throw err;
+    const code =
+      typeof e === "object" && e !== null && "code" in e
+        ? String((e as { code: unknown }).code)
+        : undefined;
+    throw new TransportError(`fetch failed: ${url}`, {
+      status: 0,
+      code,
+      cause: e,
+    });
   }
   if (!res.ok) {
-    const err = new Error(`HTTP ${res.status} ${url}`);
-    (err as Error & { status?: number }).status = res.status;
-    throw err;
+    throw new Error(`HTTP ${res.status} ${url}`);
   }
   return res.json();
 }

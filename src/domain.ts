@@ -1,7 +1,3 @@
-/**
- * Core domain types. Wire (Gamma / CLOB / Binance JSON) stays in adapters.
- */
-
 export type Confidence = number & { readonly __brand: "Confidence" };
 
 /**

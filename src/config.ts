@@ -21,11 +21,11 @@ export type EnvBag = {
 };
 
 export type LoadConfigOptions = {
-  /** CLI --stub-judge: fixed opinion, offline-friendly spot. */
   stubJudge?: boolean;
+  /** Use FixedSpotSource instead of Binance. Set explicitly; not implied by stubJudge. */
+  fixedSpot?: boolean;
   stubConfidence?: number;
   stubSide?: "UP" | "DOWN";
-  /** Injected ports (tests). When set, skip env wiring for that port. */
   overrides?: Partial<SessionConfig>;
 };
 
@@ -81,8 +81,7 @@ export function loadConfig(
 
   if (opts.overrides?.spot) {
     spot = opts.overrides.spot;
-  } else if (opts.stubJudge) {
-    // Offline smoke: no live Binance dependency when stubbing the judge
+  } else if (opts.fixedSpot) {
     spot = fixedSpotSource({
       last: 95_200,
       change24hPct: 1.4,
