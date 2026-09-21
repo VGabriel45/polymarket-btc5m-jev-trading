@@ -1,270 +1,622 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { TickSnapshot, TradeAction } from "../domain.js";
+import {
+  bigText,
+  chartGrid,
+  countdownBar,
+  depthBook,
+  formatConfHero,
+  formatMmSs,
+  formatUsdCompact,
+  gateBar,
+  polymarketBanner,
+} from "./art.js";
 
-function healthLabel(h: TickSnapshot["health"]["market"]): string {
-  if (h.ok) return "ok";
-  return `${h.code}: ${h.detail.slice(0, 48)}`;
+const G = "green" as const;
+const GB = "greenBright" as const;
+const Y = "yellow" as const;
+const R = "red" as const;
+const RB = "redBright" as const;
+const WINDOW_SEC = 300;
+
+function hhmmss(iso: string): string {
+  try {
+    return new Date(iso).toISOString().slice(11, 19);
+  } catch {
+    return iso.slice(11, 19);
+  }
 }
 
-function actionBanner(action: TradeAction): { color: string; text: string } {
+function utcNow(): string {
+  return new Date().toISOString().slice(11, 19) + " UTC";
+}
+
+function actionTitle(action: TradeAction): {
+  color: string;
+  hero: string;
+  sub: string;
+} {
   switch (action.kind) {
     case "ENTER":
-      return {
-        color: "green",
-        text: `ENTER  ${action.side}  conf=${action.confidence.toFixed(3)}  buy@${action.order.price}`,
-      };
+      return { color: GB, hero: `BUY ${action.side}`, sub: "ENTER" };
     case "HOLD":
-      return {
-        color: "cyan",
-        text: `HOLD  ${action.side}  conf=${action.confidence.toFixed(3)}`,
-      };
+      return { color: GB, hero: `HOLD ${action.side}`, sub: "RIDE TO END" };
     case "EXIT":
-      return {
-        color: "yellow",
-        text: `EXIT  ${action.side}  (${action.reason})  sell@${action.order.price}`,
-      };
+      return { color: Y, hero: `SELL ${action.side}`, sub: action.reason };
     case "SWITCH":
-      return {
-        color: "magenta",
-        text: `SWITCH  ${action.from}→${action.to}  conf=${action.confidence.toFixed(3)}`,
-      };
-    case "ABSTAIN": {
-      const r = action.reason;
-      switch (r.code) {
-        case "LOW_CONFIDENCE":
-          return {
-            color: "yellow",
-            text: `ABSTAIN LOW_CONFIDENCE  ${r.side}  conf=${r.confidence.toFixed(3)}`,
-          };
-        case "WORLD_INCOMPLETE":
-          return {
-            color: "red",
-            text: `ABSTAIN WORLD_INCOMPLETE  missing=${r.missing.join(",")}`,
-          };
-        case "JUDGE_FAILED":
-          return { color: "red", text: `ABSTAIN JUDGE_FAILED  ${r.message}` };
-        case "MARKET_UNAVAILABLE":
-          return {
-            color: "red",
-            text: `ABSTAIN MARKET_UNAVAILABLE  ${r.message}`,
-          };
-        case "STALE_INPUTS":
-          return { color: "magenta", text: `ABSTAIN STALE_INPUTS  ${r.detail}` };
-        case "AWAITING_WINDOW":
-          return { color: "gray", text: `AWAITING_WINDOW  ${r.detail}` };
-        case "SETTLING":
-          return { color: "blue", text: `SETTLING  ${r.detail}` };
-        default: {
-          const _exhaustive: never = r;
-          return { color: "white", text: String(_exhaustive) };
-        }
-      }
-    }
+      return { color: Y, hero: `FLIP ${action.to}`, sub: `${action.from}->${action.to}` };
+    case "ABSTAIN":
+      return { color: Y, hero: "WAIT", sub: "NO TRADE" };
     default: {
-      const _exhaustive: never = action;
-      return { color: "white", text: String(_exhaustive) };
+      const _e: never = action;
+      return { color: G, hero: "???", sub: String(_e) };
     }
   }
 }
 
-export function PhasePanel({ snap }: { snap: TickSnapshot }): React.ReactElement {
-  const rem = snap.secondsRemaining;
+function actionWhy(action: TradeAction, threshold: number): string {
+  if (action.kind === "ABSTAIN") {
+    const r = action.reason;
+    if (r.code === "LOW_CONFIDENCE") {
+      return `Jev says: ${r.side} but confidence ${r.confidence.toFixed(3)} <= ${threshold.toFixed(2)} gate - no entry.`;
+    }
+    if (r.code === "NO_EDGE") {
+      return `NO EDGE ${r.side}: P=${r.pWin.toFixed(3)} vs ask ${r.ask.toFixed(3)} (need >=${r.need.toFixed(3)})`;
+    }
+    if (r.code === "TOO_LATE") return r.detail;
+    if (r.code === "COOLDOWN") return r.detail;
+    if (r.code === "MAX_TRADES") return r.detail;
+    if (r.code === "AWAITING_WINDOW") return r.detail;
+    if (r.code === "SETTLING") return r.detail;
+    if (r.code === "JUDGE_FAILED") return r.message;
+    if (r.code === "MARKET_UNAVAILABLE") return r.message;
+    if (r.code === "STALE_INPUTS") return r.detail;
+    if (r.code === "WORLD_INCOMPLETE") return `missing ${r.missing.join(",")}`;
+    return "abstain";
+  }
+  return action.why;
+}
+
+function jevConf(snap: TickSnapshot): number | null {
+  if (snap.opinion) return snap.opinion.confidence;
+  if (
+    snap.action.kind === "ABSTAIN" &&
+    snap.action.reason.code === "LOW_CONFIDENCE"
+  ) {
+    return snap.action.reason.confidence;
+  }
+  if (snap.action.kind === "HOLD" || snap.action.kind === "ENTER") {
+    return snap.action.confidence;
+  }
+  if (snap.action.kind === "SWITCH") return snap.action.confidence;
+  return null;
+}
+
+function healthLabel(h: { ok: boolean }): {
+  label: string;
+  color: string;
+} {
+  if (h.ok) return { label: "Connected", color: GB };
+  return { label: "Down", color: R };
+}
+
+function Big({
+  text,
+  color,
+}: {
+  text: string;
+  color: string;
+}): React.ReactElement {
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="white" paddingX={1} width={28}>
-      <Text bold>Window</Text>
+    <Box flexDirection="column">
+      {bigText(text).map((line, i) => (
+        <Text key={i} color={color} bold>
+          {line}
+        </Text>
+      ))}
+    </Box>
+  );
+}
+
+function Cell({
+  label,
+  children,
+  width,
+  borderColor = G,
+}: {
+  label: string;
+  children: React.ReactNode;
+  width: number;
+  borderColor?: string;
+}): React.ReactElement {
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle="single"
+      borderColor={borderColor}
+      paddingX={1}
+      width={width}
+    >
+      <Text color={G} bold>
+        {label}
+      </Text>
+      {children}
+    </Box>
+  );
+}
+
+/** Top chrome. */
+export function TopBar({
+  liveTrading,
+  connected,
+}: {
+  liveTrading: boolean;
+  connected: boolean;
+}): React.ReactElement {
+  return (
+    <Box justifyContent="space-between" width={100}>
       <Text>
-        phase <Text color="cyan">{snap.phase}</Text>
+        <Text color={GB} bold>
+          {" ◆ "}JEV-NODE
+        </Text>
+        <Text color={G}> Prediction Market Trading Bot</Text>
+        <Text color={G}> - </Text>
+        <Text color={GB} bold>
+          POLYMARKET · BTC UP/DOWN 5M · {liveTrading ? "LIVE TRADING" : "DRY-RUN"}
+        </Text>
       </Text>
       <Text>
-        left{" "}
-        <Text bold color={rem != null && rem < 30 ? "red" : "green"}>
-          {rem == null ? "—" : `${rem}s`}
+        <Text color={connected ? GB : R} bold>
+          {connected ? "● CONNECTED" : "○ OFFLINE"}
         </Text>
+        <Text color={G}>  {utcNow()}</Text>
       </Text>
     </Box>
   );
 }
 
-export function PositionPanel({ snap }: { snap: TickSnapshot }): React.ReactElement {
-  const p = snap.position;
+export function NavBar(): React.ReactElement {
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="green" paddingX={1} width={36}>
-      <Text color="green" bold>
-        Position
-      </Text>
-      {p.kind === "flat" ? (
-        <Text dimColor>flat</Text>
-      ) : (
-        <>
-          <Text>
-            {p.side} ×{p.size} @ {p.entryPrice.toFixed(3)}
-          </Text>
-          <Text dimColor>{p.slug}</Text>
-        </>
-      )}
-    </Box>
-  );
-}
-
-export function PnLPanel({ snap }: { snap: TickSnapshot }): React.ReactElement {
-  const last = snap.lastPnL;
-  return (
-    <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} width={36}>
-      <Text color="yellow" bold>
-        PnL
-      </Text>
+    <Box justifyContent="space-between" width={100} marginBottom={0}>
       <Text>
-        cum{" "}
-        <Text bold color={snap.cumulativePnLUsd >= 0 ? "green" : "red"}>
-          ${snap.cumulativePnLUsd.toFixed(2)}
+        <Text backgroundColor="green" color="black" bold>
+          {" 1 Dashboard "}
         </Text>
+        <Text color={G}>  2 Positions   3 History   4 Settings</Text>
       </Text>
-      {last ? (
-        <Text dimColor>
-          last {last.slug.slice(0, 18)}… ${last.pnlUsd.toFixed(2)}
-        </Text>
-      ) : (
-        <Text dimColor>no settles yet</Text>
-      )}
+      <Text color={G} dimColor>
+        q quit   ? help
+      </Text>
     </Box>
   );
 }
 
-export function MarketPanel({ snap }: { snap: TickSnapshot }): React.ReactElement {
+export function MarketHeader({ snap }: { snap: TickSnapshot }): React.ReactElement {
   const m = snap.market;
+  const rem = formatMmSs(snap.secondsRemaining);
+  const vol = m ? formatUsdCompact(m.volume24hUsd) : "—";
+  const chg = snap.btc
+    ? `${snap.btc.change24hPct >= 0 ? "+" : ""}${snap.btc.change24hPct.toFixed(2)}%`
+    : "—";
+  const ends =
+    m?.question?.match(/\d{1,2}:\d{2}/)?.[0] ??
+    (snap.secondsRemaining != null ? `${rem} left` : "—");
+  const banner = polymarketBanner();
+
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1} width={46}>
-      <Text color="cyan" bold>
-        Polymarket BTC Up/Down 5m
-      </Text>
+    <Box
+      flexDirection="column"
+      borderStyle="single"
+      borderColor={G}
+      paddingX={1}
+      width={100}
+    >
+      {banner.map((line, i) => (
+        <Text key={i} color={GB} bold>
+          {line}
+        </Text>
+      ))}
+      <Box justifyContent="space-between">
+        <Text>
+          <Text color={Y} bold>
+            ₿{" "}
+          </Text>
+          <Text color={GB} bold>
+            BTC UP OR DOWN (5 MIN)
+          </Text>
+          <Text color={G}>
+            {"  "}Ends {ends} · {rem} left
+          </Text>
+        </Text>
+        <Text color={G}>
+          24H Vol {vol}
+          {"  "}·{"  "}
+          BTC 24h{" "}
+          <Text color={snap.btc && snap.btc.change24hPct >= 0 ? GB : RB} bold>
+            {chg}
+          </Text>
+          {snap.btc
+            ? `  ·  vs open ${snap.btc.moveVsWindowOpenPct >= 0 ? "+" : ""}${snap.btc.moveVsWindowOpenPct.toFixed(3)}%`
+            : ""}
+        </Text>
+      </Box>
       {m ? (
-        <>
-          <Text dimColor>{m.slug}</Text>
-          <Text>{m.question.slice(0, 42)}</Text>
-          <Text>
-            <Text color="green">UP {m.upMid.toFixed(3)}</Text>
-            {"  "}
-            <Text color="red">DOWN {m.downMid.toFixed(3)}</Text>
-          </Text>
-          <Text dimColor>
-            vol24h ${Math.round(m.volume24hUsd).toLocaleString()} · src={m.source}
-            {m.closed ? " · closed" : ""}
-          </Text>
-        </>
+        <Text color={G} dimColor>
+          {m.slug} · {m.active && !m.closed ? "ACTIVE" : m.closed ? "CLOSED" : "INACTIVE"} · src=
+          {m.source}
+        </Text>
       ) : (
-        <Text color="red">no market sample</Text>
+        <Text color={R}>no market feed</Text>
       )}
     </Box>
   );
 }
 
-export function BtcPanel({ snap }: { snap: TickSnapshot }): React.ReactElement {
-  const b = snap.btc;
-  return (
-    <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} width={36}>
-      <Text color="yellow" bold>
-        BTC Pulse
-      </Text>
-      {b ? (
-        <>
-          <Text>
-            last <Text bold>${b.last.toLocaleString()}</Text>
-          </Text>
-          <Text color={b.change24hPct >= 0 ? "green" : "red"}>
-            24h {b.change24hPct >= 0 ? "+" : ""}
-            {b.change24hPct.toFixed(2)}%
-          </Text>
-          <Text dimColor>
-            quoteVol {b.volume24hQuote.toExponential(2)} · src={b.source}
-          </Text>
-        </>
-      ) : (
-        <Text color="red">no spot sample</Text>
-      )}
-    </Box>
-  );
-}
+export function ChartAndDepth({
+  snap,
+  upTrail,
+}: {
+  snap: TickSnapshot;
+  upTrail: readonly number[];
+}): React.ReactElement {
+  const m = snap.market;
+  const mid = m?.upMid ?? 0.5;
+  const chart = chartGrid(upTrail.length ? upTrail : [mid], 56, 8);
+  const depth = depthBook({
+    bid: m?.upBid ?? null,
+    ask: m?.upAsk ?? null,
+    mid,
+    barWidth: 10,
+  });
+  const yHi = chart.max.toFixed(2);
+  const yLo = chart.min.toFixed(2);
+  const last = chart.last != null ? chart.last.toFixed(3) : mid.toFixed(3);
 
-export function HealthPanel({ snap }: { snap: TickSnapshot }): React.ReactElement {
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1} width={40}>
-      <Text bold>Health</Text>
-      <Text>
-        market{" "}
-        <Text color={snap.health.market.ok ? "green" : "red"}>
-          {healthLabel(snap.health.market)}
-        </Text>
-      </Text>
-      <Text>
-        spot{" "}
-        <Text color={snap.health.spot.ok ? "green" : "red"}>
-          {healthLabel(snap.health.spot)}
-        </Text>
-      </Text>
-      <Text dimColor>
-        tick #{snap.tickId} · {snap.at}
-      </Text>
-    </Box>
-  );
-}
-
-export function OpinionPanel({ snap }: { snap: TickSnapshot }): React.ReactElement {
-  const o = snap.opinion;
-  return (
-    <Box flexDirection="column" borderStyle="round" borderColor="magenta" paddingX={1} width={40}>
-      <Text color="magenta" bold>
-        Jev Opinion
-      </Text>
-      {o ? (
-        <>
-          <Text>
-            side <Text bold>{o.side}</Text> · conf {o.confidence.toFixed(3)}
+    <Box width={100}>
+      <Box
+        flexDirection="column"
+        borderStyle="single"
+        borderColor={G}
+        paddingX={1}
+        width={72}
+      >
+        <Box justifyContent="space-between">
+          <Text color={G} bold>
+            LIVE PRICE (POLYMARKET UP)
           </Text>
-          {o.probs ? (
-            <Text dimColor>
-              P(UP)={o.probs.UP.toFixed(3)} P(DOWN)={o.probs.DOWN.toFixed(3)}
+          <Text color={G} dimColor>
+            [5M]
+          </Text>
+        </Box>
+        <Box>
+          <Box flexDirection="column" marginRight={1}>
+            <Text color={G} dimColor>
+              {yHi}
             </Text>
-          ) : null}
-        </>
-      ) : (
-        <Text dimColor>no opinion this tick</Text>
-      )}
+            <Text color={G} dimColor>
+              {" "}
+            </Text>
+            <Text color={G} dimColor>
+              {" "}
+            </Text>
+            <Text color={G} dimColor>
+              {yLo}
+            </Text>
+          </Box>
+          <Box flexDirection="column">
+            {chart.rows.map((row, i) => (
+              <Text key={i} color={GB}>
+                {row}
+              </Text>
+            ))}
+          </Box>
+          <Box flexDirection="column" marginLeft={1}>
+            <Text color={GB} bold>
+              ${last}
+            </Text>
+            <Text color={G} dimColor>
+              NOW
+            </Text>
+          </Box>
+        </Box>
+        <Text color={G} dimColor>
+          window path · samples {upTrail.length}
+        </Text>
+      </Box>
+
+      <Box
+        flexDirection="column"
+        borderStyle="single"
+        borderColor={G}
+        paddingX={1}
+        width={28}
+      >
+        <Text color={G} bold>
+          MARKET DEPTH
+        </Text>
+        <Text color={RB} dimColor>
+          Price    Size
+        </Text>
+        {depth.map((line, i) => (
+          <Text
+            key={i}
+            color={line.startsWith("ASK") ? RB : line.startsWith("MID") ? Y : GB}
+            bold={line.startsWith("MID")}
+          >
+            {line}
+          </Text>
+        ))}
+      </Box>
     </Box>
   );
 }
 
-export function ActionPanel({ snap }: { snap: TickSnapshot }): React.ReactElement {
-  const banner = actionBanner(snap.action);
+export function StatsRow({ snap }: { snap: TickSnapshot }): React.ReactElement {
+  const m = snap.market;
+  const up = m?.upMid ?? 0;
+  const down = m?.downMid ?? 0;
+  const spr = m?.upSpread ?? (m?.upAsk != null && m?.upBid != null ? m.upAsk - m.upBid : null);
+  const sprPct =
+    spr != null && up > 0 ? `${((spr / up) * 100).toFixed(1)}%` : "—";
+  const rem = formatMmSs(snap.secondsRemaining);
+  const cd = countdownBar(snap.secondsRemaining, WINDOW_SEC, 14);
+  const chg = snap.btc
+    ? `${snap.btc.change24hPct >= 0 ? "+" : ""}${snap.btc.change24hPct.toFixed(2)}%`
+    : "—";
+
+  return (
+    <Box width={100} gap={0}>
+      <Cell label="UP PRICE" width={20}>
+        <Text color={GB} bold>
+          {up.toFixed(3)} ({Math.round(up * 100)}%)
+        </Text>
+      </Cell>
+      <Cell label="DOWN PRICE" width={20} borderColor={R}>
+        <Text color={RB} bold>
+          {down.toFixed(3)} ({Math.round(down * 100)}%)
+        </Text>
+      </Cell>
+      <Cell label="SPREAD" width={18}>
+        <Text color={G} bold>
+          {spr != null ? spr.toFixed(3) : "—"} ({sprPct})
+        </Text>
+      </Cell>
+      <Cell label="24H VOLUME" width={20}>
+        <Text color={G} bold>
+          {m ? formatUsdCompact(m.volume24hUsd) : "—"}{" "}
+          <Text color={snap.btc && snap.btc.change24hPct >= 0 ? GB : RB}>
+            {chg}
+          </Text>
+        </Text>
+      </Cell>
+      <Cell label="TIME LEFT" width={22}>
+        <Text color={GB} bold>
+          {rem}
+        </Text>
+        <Text color={G}>[{cd}]</Text>
+      </Cell>
+    </Box>
+  );
+}
+
+export function DecisionPanel({
+  snap,
+  threshold,
+}: {
+  snap: TickSnapshot;
+  threshold: number;
+}): React.ReactElement {
+  const title = actionTitle(snap.action);
+  const why = actionWhy(snap.action, threshold);
+  const conf = jevConf(snap);
+  const o = snap.opinion;
+  const confVal = o?.confidence ?? conf;
+  const lean = o?.side;
+
   return (
     <Box
       flexDirection="column"
       borderStyle="double"
-      borderColor={banner.color}
+      borderColor={title.color}
       paddingX={1}
-      width={82}
+      width={58}
     >
-      <Text color={banner.color} bold>
-        {banner.text}
+      <Text color={G} bold>
+        TRADING DECISION{" "}
+        <Text color={G} dimColor>
+          TICK #{snap.tickId} · {hhmmss(snap.at)}
+        </Text>
+      </Text>
+      <Box marginY={0}>
+        <Big text={title.hero} color={title.color} />
+      </Box>
+      <Text color={title.color} bold>
+        {title.sub}
+      </Text>
+
+      {confVal != null ? (
+        <>
+          <Text color={GB} bold>
+            CONFIDENCE {formatConfHero(confVal)}
+            {lean ? (
+              <Text color={lean === "UP" ? GB : RB}> (leans {lean})</Text>
+            ) : null}
+          </Text>
+          <Text color={GB} bold>
+            [{gateBar(confVal, threshold, 40)}]
+          </Text>
+          <Text color={G} dimColor>
+            {" ".repeat(Math.max(0, Math.round(threshold * 40) - 6))}gate:{" "}
+            {threshold.toFixed(2)}
+          </Text>
+          {o?.probs ? (
+            <Text color={G}>
+              P(UP) <Text color={GB} bold>{o.probs.UP.toFixed(3)}</Text>
+              {"  /  "}
+              P(DOWN) <Text color={RB} bold>{o.probs.DOWN.toFixed(3)}</Text>
+            </Text>
+          ) : null}
+        </>
+      ) : (
+        <Text color={G}>no Jev read this tick</Text>
+      )}
+
+      <Box
+        borderStyle="single"
+        borderColor={Y}
+        paddingX={1}
+        marginTop={1}
+        flexDirection="column"
+      >
+        <Text color={Y}>{why.slice(0, 72)}</Text>
+      </Box>
+    </Box>
+  );
+}
+
+export function PositionPanel({
+  snap,
+}: {
+  snap: TickSnapshot;
+}): React.ReactElement {
+  const p = snap.position;
+  const open = p.kind === "open";
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle="double"
+      borderColor={open ? GB : G}
+      paddingX={1}
+      width={42}
+    >
+      <Text color={G} bold>
+        CURRENT POSITION
+      </Text>
+      {open ? (
+        <>
+          <Big text={p.side} color={GB} />
+          <Text color={GB} bold>
+            {p.side} ×{p.size} @ {p.entryPrice.toFixed(3)}
+          </Text>
+          <Text color={G}>
+            Entry {p.entryPrice.toFixed(3)}
+            {snap.factsPreview?.session.position.kind === "open"
+              ? ` · Mark ${snap.factsPreview.session.position.mark.toFixed(3)}`
+              : ""}
+          </Text>
+          <Text color={GB} bold>
+            Unrealized{" "}
+            {snap.unrealizedPnLUsd != null
+              ? `${snap.unrealizedPnLUsd >= 0 ? "+" : ""}$${snap.unrealizedPnLUsd.toFixed(2)}`
+              : "—"}
+          </Text>
+        </>
+      ) : (
+        <>
+          <Big text="FLAT" color={G} />
+          <Text color={G} dimColor>
+            No open position
+          </Text>
+          <Text color={G}>Entry — · Size — · Unrealized —</Text>
+        </>
+      )}
+      <Text color={snap.cumulativePnLUsd >= 0 ? GB : RB} bold>
+        PnL (session): {snap.cumulativePnLUsd >= 0 ? "+" : ""}$
+        {snap.cumulativePnLUsd.toFixed(2)}
       </Text>
     </Box>
   );
 }
 
-export function IntentLogPanel({ snap }: { snap: TickSnapshot }): React.ReactElement {
-  const tail = snap.intentLogTail;
+export function StatusPanel({
+  snap,
+  liveTrading,
+  nextSec,
+}: {
+  snap: TickSnapshot;
+  liveTrading: boolean;
+  nextSec: number;
+}): React.ReactElement {
+  const m = healthLabel(snap.health.market);
+  const s = healthLabel(snap.health.spot);
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="green" paddingX={1} width={82}>
-      <Text color="green" bold>
-        Intent log (dry-run)
+    <Box
+      flexDirection="column"
+      borderStyle="single"
+      borderColor={G}
+      paddingX={1}
+      width={42}
+    >
+      <Text color={G} bold>
+        TRADING STATUS
       </Text>
-      {tail.length === 0 ? (
-        <Text dimColor>empty</Text>
+      <Text color={G}>
+        API{"          "}
+        <Text color={GB}>Ready</Text>
+        <Text color={G} dimColor>
+          {" "}
+          next {Math.max(0, nextSec)}s
+        </Text>
+      </Text>
+      <Text color={G}>
+        Polymarket{"   "}
+        <Text color={m.color}>{m.label}</Text>
+      </Text>
+      <Text color={G}>
+        Spot/BTC{"     "}
+        <Text color={s.color}>{s.label}</Text>
+      </Text>
+      <Text color={G}>
+        Jev Model{"    "}
+        <Text color={snap.opinion ? GB : Y}>
+          {snap.opinion ? "Ready" : "Idle"}
+        </Text>
+      </Text>
+      <Text color={G}>
+        Order Engine{" "}
+        <Text color={liveTrading ? RB : G}>
+          {liveTrading ? "LIVE" : "Dry-run"}
+        </Text>
+        <Text color={G} dimColor>
+          {" "}
+          {snap.phase}
+        </Text>
+      </Text>
+    </Box>
+  );
+}
+
+export function DecisionsTable({
+  snap,
+}: {
+  snap: TickSnapshot;
+}): React.ReactElement {
+  const rows = snap.decisionLog.slice(-6);
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle="single"
+      borderColor={G}
+      paddingX={1}
+      width={58}
+    >
+      <Text color={G} bold>
+        RECENT DECISIONS
+      </Text>
+      <Text color={G} dimColor>
+        {"TIME     TICK  DECISION  CONF   ACTION"}
+      </Text>
+      {rows.length === 0 ? (
+        <Text color={G} dimColor>
+          empty
+        </Text>
       ) : (
-        tail.slice(-6).map((row, i) => (
-          <Text key={`${row.idempotencyKey}-${i}`} dimColor={i < tail.length - 1}>
-            {row.side} {row.outcome} @{row.price} ×{row.size} ·{" "}
-            {row.idempotencyKey.slice(0, 28)}…
+        rows.map((d, i) => (
+          <Text key={`${d.tickId}-${i}`} color={G} dimColor>
+            {hhmmss(d.at)}  #{String(d.tickId).padStart(3, "0")}  {d.kind.padEnd(8)}{" "}
+            {d.conf != null ? d.conf.toFixed(3) : "  —  "}  {d.summary.slice(0, 28)}
           </Text>
         ))
       )}
@@ -272,5 +624,66 @@ export function IntentLogPanel({ snap }: { snap: TickSnapshot }): React.ReactEle
   );
 }
 
-/** @deprecated */
-export const VerdictPanel = ActionPanel;
+export function EventLog({ snap }: { snap: TickSnapshot }): React.ReactElement {
+  const rows = snap.activityLog.slice(-7);
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle="single"
+      borderColor={G}
+      paddingX={1}
+      width={42}
+    >
+      <Box justifyContent="space-between">
+        <Text color={G} bold>
+          EVENT LOG
+        </Text>
+        <Text color={GB} bold>
+          ● LIVE
+        </Text>
+      </Box>
+      {rows.length === 0 ? (
+        <Text color={G} dimColor>
+          empty
+        </Text>
+      ) : (
+        rows.map((a, i) => (
+          <Text
+            key={`${a.at}-${a.op}-${i}`}
+            color={!a.ok ? R : G}
+            dimColor={a.ok}
+          >
+            {hhmmss(a.at)} [{a.channel}] {a.op}
+            {a.ms != null ? ` ${a.ms}ms` : ""}
+          </Text>
+        ))
+      )}
+    </Box>
+  );
+}
+
+export function Footer(): React.ReactElement {
+  return (
+    <Box width={100}>
+      <Text color={GB} bold>
+        JEV v0.1.0
+      </Text>
+    </Box>
+  );
+}
+
+/** @deprecated aliases */
+export const HeaderBar = TopBar;
+export const MarketBoard = ChartAndDepth;
+export const DecisionBoard = DecisionPanel;
+export const DecisionLogPanel = DecisionsTable;
+export const ActivityLogPanel = EventLog;
+export const OrderLogPanel = Footer;
+export const ActionBanner = DecisionPanel;
+export const VoiceLine = () => null;
+export const StatusRow = () => null;
+export const FeedsRow = () => null;
+export const BrainRow = () => null;
+export const ActionPanel = DecisionPanel;
+export const IntentLogPanel = Footer;
+export const VerdictPanel = DecisionPanel;

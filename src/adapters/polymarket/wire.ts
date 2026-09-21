@@ -81,13 +81,57 @@ export function secondsRemaining(
   return Math.max(0, Math.floor((endMs - nowMs) / 1000));
 }
 
+/** Derive window end from `btc-updown-5m-{unixStart}` when Gamma omits endDate. */
+export function endsAtFromSlug(slug: string): IsoTime | null {
+  const m = /btc-updown-(?:5m|15m)-(\d+)$/.exec(slug);
+  if (!m) return null;
+  const startSec = Number(m[1]);
+  if (!Number.isFinite(startSec)) return null;
+  const windowSec = slug.includes("-15m-") ? 900 : WINDOW_SEC;
+  return asIsoTime(new Date((startSec + windowSec) * 1000).toISOString());
+}
+
+export function effectiveEndsAt(market: DomainMarket): IsoTime | null {
+  return market.endsAt ?? endsAtFromSlug(market.eventSlug);
+}
+
 export function windowHasEnded(
   market: DomainMarket,
   now: IsoTime | string | number = Date.now(),
 ): boolean {
   if (market.closed) return true;
-  const rem = secondsRemaining(market.endsAt, now);
+  const rem = secondsRemaining(effectiveEndsAt(market), now);
   return rem !== null && rem <= 0;
+}
+
+/**
+ * True when the live feed has moved on from the window we were trading,
+ * or the held window's clock/closed flag says it's over.
+ */
+export function shouldCloseWindow(args: {
+  activeSlug: string | null;
+  position: { kind: "flat" } | { kind: "open"; slug: string };
+  market: DomainMarket;
+  now?: IsoTime | string | number;
+}): boolean {
+  const { activeSlug, position, market } = args;
+  const now = args.now ?? Date.now();
+  const heldSlug =
+    position.kind === "open" ? position.slug : activeSlug;
+
+  if (heldSlug != null && market.eventSlug !== heldSlug) {
+    return true; // gamma already serving next window
+  }
+  if (heldSlug != null && activeBtcUpDownSlug(
+    typeof now === "number" ? now : Date.parse(String(now)),
+  ) !== heldSlug) {
+    return true; // wall clock rolled past held slug
+  }
+  if (heldSlug == null || market.eventSlug === heldSlug) {
+    if (market.closed || !market.active) return true;
+    if (windowHasEnded(market, now)) return true;
+  }
+  return false;
 }
 
 /**
@@ -132,6 +176,13 @@ function mapOutcomePrices(
   return mapped;
 }
 
+/** Drop a CLOB top-of-book print that is a stub wing far from mid. */
+function saneTop(top: number | null, mid: number): number | null {
+  if (top == null || !Number.isFinite(top)) return null;
+  if (Math.abs(top - mid) > 0.25) return null;
+  return top;
+}
+
 /**
  * Map a Gamma event (+ optional CLOB quotes) into DomainMarket.
  * Outcomes matched by name (Up/Down); token IDs from clobTokenIds.
@@ -151,6 +202,11 @@ export function domainMarketFromGamma(
     throw new Error("gamma market missing outcomes or clobTokenIds");
   }
 
+  const mappedPrices = mapOutcomePrices(
+    outcomes,
+    parseJsonArray(market.outcomePrices),
+  );
+
   const bySide = {} as DomainMarket["bySide"];
   for (let i = 0; i < outcomes.length; i++) {
     const side = classifyOutcome(outcomes[i]!);
@@ -163,13 +219,16 @@ export function domainMarketFromGamma(
       bestBid: null,
       bestAsk: null,
     };
-    const mid = q.mid ?? 0.5;
+    const gammaPx = mappedPrices?.[side] ?? null;
+    const mid = q.mid ?? gammaPx ?? 0.5;
+    const bestBid = saneTop(q.bestBid, mid);
+    const bestAsk = saneTop(q.bestAsk, mid);
     bySide[side] = {
       tokenId: asTokenId(tokenId),
       outcomeLabel: outcomes[i]!,
       mid,
-      bestBid: q.bestBid,
-      bestAsk: q.bestAsk,
+      bestBid,
+      bestAsk,
       spread: q.spread,
       lastTrade: q.lastTrade,
     };
@@ -181,19 +240,22 @@ export function domainMarketFromGamma(
 
   const endsRaw = market.endDate ?? market.end_date_iso ?? null;
   const vol = toNum(market.volume24hr ?? market.volume_24hr) ?? 0;
-  const priceRaw = parseJsonArray(market.outcomePrices);
   const closed = Boolean(market.closed ?? event.closed ?? false);
   const active = market.active ?? event.active ?? !closed;
+  const eventSlug = event.slug ?? "unknown";
+  const endsAt = endsRaw
+    ? asIsoTime(endsRaw)
+    : endsAtFromSlug(eventSlug);
 
   return {
-    eventSlug: event.slug ?? "unknown",
+    eventSlug,
     question: market.question ?? event.title ?? "Bitcoin Up or Down",
     conditionId: String(market.conditionId ?? market.condition_id ?? ""),
-    endsAt: endsRaw ? asIsoTime(endsRaw) : null,
+    endsAt,
     volume24hUsd: vol,
     closed,
     active: Boolean(active),
-    outcomePrices: mapOutcomePrices(outcomes, priceRaw),
+    outcomePrices: mappedPrices,
     bySide,
   };
 }

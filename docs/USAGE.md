@@ -1,4 +1,4 @@
-# btc-updown-jev — Usage (candidate 1)
+# polymarket-btc5m-jev-trading — Usage (candidate 1)
 
 Dry-run agent that watches the active Polymarket **BTC Up or Down** market, feeds typed facts to TypeSafe Jev, and either logs an intended BUY or abstains. Never posts live orders.
 
@@ -28,8 +28,8 @@ Env knobs:
 | `POLYMARKET_SOURCE` | `auto` | `live` \| `fixture` \| `auto` |
 | `BTC_UPDOWN_SLUG` | (series resolve) | Optional Gamma event slug override |
 | `TICK_MS` | `15000` | Loop interval |
-| `ACT_THRESHOLD` | `0.70` | Confidence gate (encoded in types; override for experiments) |
-| `DRY_RUN_SIZE` | `10` | Shares on intended BUY log line |
+| `ACT_THRESHOLD` | `0.80` | Confidence gate (encoded in types; override for experiments) |
+| `BET_USD` | `5` | Max USD notional per ENTER |
 
 ## Mental model
 
@@ -115,8 +115,8 @@ const session = await WatchSession.open({
   spot: new FixedSpotSource({ last: 95_200, change24hPct: 1.4, volume24h: 1.2e9 }),
   judge: new StubJudge({ side: "UP", confidence: 0.81 }), // only for layout/tests
   pen,
-  threshold: 0.7,
-  dryRunSize: 10,
+  threshold: 0.8,
+  betUsd: 5,
 });
 
 const snap = await session.tick();

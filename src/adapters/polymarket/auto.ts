@@ -22,5 +22,15 @@ export function autoMarketSource(opts: {
         return fixture.pullActiveBtcUpDown();
       }
     },
+    async pullBySlug(slug: string): Promise<Sample<DomainMarket>> {
+      if (useFixture) return fixture.pullActiveBtcUpDown();
+      try {
+        return await live.pullBySlug!(slug);
+      } catch (err) {
+        if (!isTransportFailure(err)) throw err;
+        useFixture = true;
+        return fixture.pullActiveBtcUpDown();
+      }
+    },
   };
 }

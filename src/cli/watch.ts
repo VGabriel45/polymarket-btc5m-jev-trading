@@ -21,6 +21,10 @@ async function main(): Promise<void> {
   const { waitUntilExit } = render(
     React.createElement(App, {
       subscribe: (emit) => session.run((snap) => emit(snap)),
+      liveTrading: cfg.liveTrading,
+      threshold: cfg.threshold,
+      betUsd: cfg.betUsd,
+      tickMs: cfg.tickMs,
     }),
   );
 

@@ -59,19 +59,82 @@ async function clobQuotes(tokenId: string): Promise<ClobSideQuotes> {
   let bestBid: number | null = null;
   let bestAsk: number | null = null;
   if (bookR.status === "fulfilled") {
-    const book = bookR.value as {
-      bids?: Array<{ price: string }>;
-      asks?: Array<{ price: string }>;
-    };
-    const bid = book.bids?.[0]?.price;
-    const ask = book.asks?.[0]?.price;
-    bestBid = bid != null ? Number(bid) : null;
-    bestAsk = ask != null ? Number(ask) : null;
-    if (bestBid != null && !Number.isFinite(bestBid)) bestBid = null;
-    if (bestAsk != null && !Number.isFinite(bestAsk)) bestAsk = null;
+    const parsed = bestBidAskFromBook(bookR.value);
+    bestBid = parsed.bestBid;
+    bestAsk = parsed.bestAsk;
   }
 
   return { mid, spread, lastTrade, bestBid, bestAsk };
+}
+
+/** CLOB books are often worst-first. Take the actual top of book. */
+export function bestBidAskFromBook(book: unknown): {
+  bestBid: number | null;
+  bestAsk: number | null;
+} {
+  if (book == null || typeof book !== "object") {
+    return { bestBid: null, bestAsk: null };
+  }
+  const o = book as {
+    bids?: unknown;
+    asks?: unknown;
+    market?: string;
+  };
+  const bids = priceLevels(o.bids);
+  const asks = priceLevels(o.asks);
+  return {
+    bestBid: bids.length > 0 ? Math.max(...bids) : null,
+    bestAsk: asks.length > 0 ? Math.min(...asks) : null,
+  };
+}
+
+function priceLevels(raw: unknown): number[] {
+  if (!Array.isArray(raw)) return [];
+  const out: number[] = [];
+  for (const row of raw) {
+    let p: number | null = null;
+    if (typeof row === "number") p = row;
+    else if (typeof row === "string") p = Number(row);
+    else if (Array.isArray(row) && row.length > 0) p = Number(row[0]);
+    else if (row != null && typeof row === "object" && "price" in row) {
+      p = Number((row as { price: unknown }).price);
+    }
+    if (p != null && Number.isFinite(p) && p > 0 && p <= 1) out.push(p);
+  }
+  return out;
+}
+
+async function sampleForSlug(slug: string): Promise<Sample<DomainMarket>> {
+  const event = await resolveEvent(slug);
+  const market = event.markets?.[0];
+  if (!market) throw new Error("live gamma: empty markets");
+
+  let tokenIds: string[] = [];
+  const raw = market.clobTokenIds;
+  if (typeof raw === "string") {
+    try {
+      tokenIds = JSON.parse(raw) as string[];
+    } catch {
+      tokenIds = [];
+    }
+  } else if (Array.isArray(raw)) {
+    tokenIds = raw.map(String);
+  }
+
+  const quotesByToken: Record<string, ClobSideQuotes> = {};
+  await Promise.all(
+    tokenIds.map(async (tid) => {
+      quotesByToken[tid] = await clobQuotes(tid);
+    }),
+  );
+
+  const value = domainMarketFromGamma(event, quotesByToken);
+  const pulledAt = nowIso();
+  return {
+    value,
+    freshness: { pulledAt: asIsoTime(pulledAt), ageMs: 0 },
+    source: "live",
+  };
 }
 
 export function liveMarketSource(opts: {
@@ -80,36 +143,10 @@ export function liveMarketSource(opts: {
   return {
     async pullActiveBtcUpDown(): Promise<Sample<DomainMarket>> {
       const slug = opts.slugOverride ?? activeBtcUpDownSlug();
-      const event = await resolveEvent(slug);
-      const market = event.markets?.[0];
-      if (!market) throw new Error("live gamma: empty markets");
-
-      let tokenIds: string[] = [];
-      const raw = market.clobTokenIds;
-      if (typeof raw === "string") {
-        try {
-          tokenIds = JSON.parse(raw) as string[];
-        } catch {
-          tokenIds = [];
-        }
-      } else if (Array.isArray(raw)) {
-        tokenIds = raw.map(String);
-      }
-
-      const quotesByToken: Record<string, ClobSideQuotes> = {};
-      await Promise.all(
-        tokenIds.map(async (tid) => {
-          quotesByToken[tid] = await clobQuotes(tid);
-        }),
-      );
-
-      const value = domainMarketFromGamma(event, quotesByToken);
-      const pulledAt = nowIso();
-      return {
-        value,
-        freshness: { pulledAt: asIsoTime(pulledAt), ageMs: 0 },
-        source: "live",
-      };
+      return sampleForSlug(slug);
+    },
+    async pullBySlug(slug: string): Promise<Sample<DomainMarket>> {
+      return sampleForSlug(slug);
     },
   };
 }

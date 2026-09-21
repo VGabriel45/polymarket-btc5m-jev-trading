@@ -18,4 +18,4 @@
 
 ## Verification of synthesis
 
-Design package lives in `docs/` (`USAGE.md`, `MODULES.md`) plus live types in `src/domain.ts`. Implementation must match USAGE call sites and encode confidence `> 0.70` via branded `HighConfidence`.
+Design package lives in `docs/` (`USAGE.md`, `MODULES.md`) plus live types in `src/domain.ts`. Implementation must match USAGE call sites and encode confidence `> 0.80` via branded `HighConfidence`.

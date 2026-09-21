@@ -1,6 +1,6 @@
-# btc-updown-jev
+# polymarket-btc5m-jev-trading
 
-Dry-run agent for the Polymarket **BTC Up or Down 5-minute** market. Every ~10s it pulls market + BTC, asks TypeSafe Jev for UP/DOWN + confidence, then applies an app-owned policy (enter / hold / exit / switch / abstain). Intended orders are logged only. Live posting is gated and unfinished.
+Agent for the Polymarket **BTC Up or Down 5-minute** market. Every ~5s it pulls market + BTC, asks TypeSafe Jev for UP/DOWN + confidence, then applies an app-owned policy (enter / hold / exit / switch / abstain). Default is dry-run logging; set `LIVE_TRADING=1` to post via deposit-wallet CLOB v2.
 
 ## Lifecycle
 
@@ -11,15 +11,14 @@ Dry-run agent for the Polymarket **BTC Up or Down 5-minute** market. Every ~10s 
 3. **settling** — when `endsAt` passed or Gamma `closed`, resolve winner from `outcomePrices`, mark open position to $1/$0 (or early exit bid), append `data/pnl.jsonl`.
 4. **recorded** — show last PnL in TUI, then return to awaiting the next slug (position reset to flat).
 
-Policy (threshold default 0.70, confidence must be **strictly greater**):
+Policy (threshold default **0.90**, confidence must be **strictly greater**):
 
-| Position | Confidence | Action |
-|----------|------------|--------|
-| flat | ≤ 0.70 | ABSTAIN |
-| flat | > 0.70 | ENTER (dry BUY @ best ask) |
-| open | ≤ 0.70 | EXIT (dry SELL @ best bid) |
-| open | high, same side | HOLD |
-| open | high, opposite | SWITCH (exit then enter) |
+| Position | Condition | Action |
+|----------|-----------|--------|
+| flat | conf ≤ 0.90 | ABSTAIN |
+| flat | ask > 0.70, or P(win) < ask+0.10, or &lt;90s left | ABSTAIN |
+| flat | conf > 0.90 and edge + time ok | ENTER once |
+| open | any | HOLD until window settle |
 
 ## Requirements
 
@@ -50,11 +49,11 @@ POLYMARKET_SOURCE=fixture npm run once -- --stub-judge
 ### Gate smoke (offline)
 
 ```bash
-# ENTER (stub conf 0.81 > 0.70)
-POLYMARKET_SOURCE=fixture npm run once -- --stub-judge --stub-confidence 0.81
+# ENTER (stub conf 0.91 > 0.90)
+POLYMARKET_SOURCE=fixture npm run once -- --stub-judge --stub-confidence 0.91
 
-# ABSTAIN LOW_CONFIDENCE while flat (stub conf 0.5)
-POLYMARKET_SOURCE=fixture npm run once -- --stub-judge --stub-confidence 0.5
+# ABSTAIN LOW_CONFIDENCE while flat (stub conf 0.75 ≤ 0.90)
+POLYMARKET_SOURCE=fixture npm run once -- --stub-judge --stub-confidence 0.75
 
 # Policy unit smoke (EXIT / SWITCH without a multi-tick session)
 npx tsx scripts/smoke-policy.ts
@@ -67,10 +66,16 @@ npx tsx scripts/smoke-policy.ts
 | `TYPESAFE_API_KEY` | — | Required for real Jev |
 | `POLYMARKET_SOURCE` | `auto` | `live` \| `fixture` \| `auto` |
 | `BTC_UPDOWN_SLUG` | series resolve | Optional Gamma slug override |
-| `TICK_MS` | `10000` | Watch loop interval |
-| `ACT_THRESHOLD` | `0.70` | Confidence gate |
-| `DRY_RUN_SIZE` | `10` | Shares on intended orders |
-| `LIVE_TRADING` | unset | If `1`, LiveBroker throws “not wired” |
+| `TICK_MS` | `5000` | Watch loop interval |
+| `ACT_THRESHOLD` | `0.90` | Enter gate; then hold to resolution |
+| `MAX_ASK` | `0.70` | Refuse ENTER above this ask |
+| `MIN_EDGE` | `0.10` | Need P(win) ≥ ask + this |
+| `MIN_SECONDS_TO_ENTER` | `90` | No new ENTER late in window |
+| `BET_USD` | `5` | Max USD notional per ENTER (shares sized from ask) |
+| `LIVE_TRADING` | unset | `1` → LiveBroker posts CLOB v2 (needs `WALLET_PVK` + funder) |
+| `WALLET_PVK` | — | EOA private key (signer for POLY_1271) |
+| `POLYMARKET_FUNDER` | SecureClient | Deposit wallet address |
+| `SIGNATURE_TYPE` | `3` | `3` = POLY_1271 |
 | `PNL_PATH` | `data/pnl.jsonl` | Append-only settle ledger |
 
 ## Typecheck

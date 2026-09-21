@@ -6,9 +6,17 @@ import { binanceSpotSource } from "./adapters/binance/live.js";
 import { fixedSpotSource } from "./adapters/binance/fixed.js";
 import { typeSafeJudge } from "./adapters/jev/typesafe.js";
 import { stubJudge } from "./adapters/jev/stub.js";
+import { applyDry } from "./broker/dry.js";
+import { LiveBroker } from "./broker/live.js";
 import { logPen } from "./dryrun/log-pen.js";
 import { defaultPnLPath } from "./pnl/ledger.js";
-import type { Judge, MarketSource, SessionConfig, SpotSource } from "./domain.js";
+import type {
+  Judge,
+  MarketSource,
+  OrderExecutor,
+  SessionConfig,
+  SpotSource,
+} from "./domain.js";
 
 export type EnvBag = {
   TYPESAFE_API_KEY?: string;
@@ -16,16 +24,23 @@ export type EnvBag = {
   BTC_UPDOWN_SLUG?: string;
   TICK_MS?: string;
   ACT_THRESHOLD?: string;
-  DRY_RUN_SIZE?: string;
+  BET_USD?: string;
+  MAX_ASK?: string;
+  MIN_EDGE?: string;
+  MIN_SECONDS_TO_ENTER?: string;
+  MAX_ENTERS_PER_WINDOW?: string;
   FIXTURE_PATH?: string;
   STALE_AFTER_MS?: string;
   LIVE_TRADING?: string;
   PNL_PATH?: string;
+  WALLET_PVK?: string;
+  POLYMARKET_FUNDER?: string;
+  SIGNATURE_TYPE?: string;
+  POLYGON_RPC_URL?: string;
 };
 
 export type LoadConfigOptions = {
   stubJudge?: boolean;
-  /** Use FixedSpotSource instead of Binance. Set explicitly; not implied by stubJudge. */
   fixedSpot?: boolean;
   stubConfidence?: number;
   stubSide?: "UP" | "DOWN";
@@ -46,8 +61,17 @@ function marketFromEnv(env: EnvBag, fixturePath: string): MarketSource {
   return autoMarketSource({ slugOverride, fixturePath });
 }
 
+function dryExecutor(): OrderExecutor {
+  return {
+    async apply(position, action, market, at) {
+      return applyDry(position, action, market, at);
+    },
+  };
+}
+
 /**
  * Build SessionConfig from env. Fail-loud if TYPESAFE_API_KEY missing unless stub.
+ * LIVE_TRADING=1 posts via deposit-wallet CLOB v2 (POLY_1271).
  */
 export function loadConfig(
   env: NodeJS.ProcessEnv | EnvBag,
@@ -57,9 +81,16 @@ export function loadConfig(
   const fixturePath = resolve(
     e.FIXTURE_PATH ?? "fixtures/btc-updown-active.json",
   );
-  const threshold = num(e.ACT_THRESHOLD, 0.7);
-  const dryRunSize = num(e.DRY_RUN_SIZE, 10);
-  const tickMs = num(e.TICK_MS, 10_000);
+  const threshold = num(e.ACT_THRESHOLD, 0.9);
+  const betUsd = num(e.BET_USD, 5);
+  const maxAsk = num(e.MAX_ASK, 0.7);
+  const minEdge = num(e.MIN_EDGE, 0.1);
+  const minSecondsToEnter = Math.max(0, Math.floor(num(e.MIN_SECONDS_TO_ENTER, 90)));
+  const maxEntersPerWindow = Math.max(
+    1,
+    Math.floor(num(e.MAX_ENTERS_PER_WINDOW, 1)),
+  );
+  const tickMs = num(e.TICK_MS, 5_000);
   const staleAfterMs = num(e.STALE_AFTER_MS, 120_000);
   const liveTrading = e.LIVE_TRADING === "1" || e.LIVE_TRADING === "true";
   const pnlPath = resolve(e.PNL_PATH ?? defaultPnLPath());
@@ -72,7 +103,7 @@ export function loadConfig(
       opts.overrides?.judge ??
       stubJudge({
         side: opts.stubSide ?? "UP",
-        confidence: opts.stubConfidence ?? 0.81,
+        confidence: opts.stubConfidence ?? 0.91,
       });
   } else {
     const apiKey = e.TYPESAFE_API_KEY?.trim();
@@ -100,17 +131,44 @@ export function loadConfig(
     opts.overrides?.polymarket ?? marketFromEnv(e, fixturePath);
   const pen = opts.overrides?.pen ?? logPen();
 
+  let executor: OrderExecutor;
+  if (opts.overrides?.executor) {
+    executor = opts.overrides.executor;
+  } else if (liveTrading) {
+    const pk = e.WALLET_PVK?.trim();
+    if (!pk) throw new Error("LIVE_TRADING=1 requires WALLET_PVK");
+    const live = new LiveBroker({
+      privateKey: pk,
+      funderAddress: e.POLYMARKET_FUNDER?.trim(),
+      rpcUrl: e.POLYGON_RPC_URL,
+      signatureType: num(e.SIGNATURE_TYPE, 3),
+    });
+    executor = {
+      apply: (position, action, market, at) =>
+        live.apply(position, action, market, at),
+    };
+  } else {
+    executor = dryExecutor();
+  }
+
   return {
     polymarket,
     spot,
     judge,
     pen,
     threshold: opts.overrides?.threshold ?? threshold,
-    dryRunSize: opts.overrides?.dryRunSize ?? dryRunSize,
+    betUsd: opts.overrides?.betUsd ?? betUsd,
+    maxAsk: opts.overrides?.maxAsk ?? maxAsk,
+    minEdge: opts.overrides?.minEdge ?? minEdge,
+    minSecondsToEnter:
+      opts.overrides?.minSecondsToEnter ?? minSecondsToEnter,
+    maxEntersPerWindow:
+      opts.overrides?.maxEntersPerWindow ?? maxEntersPerWindow,
     tickMs: opts.overrides?.tickMs ?? tickMs,
     staleAfterMs: opts.overrides?.staleAfterMs ?? staleAfterMs,
     windowLengthSec: opts.overrides?.windowLengthSec ?? 300,
     pnlPath: opts.overrides?.pnlPath ?? pnlPath,
     liveTrading: opts.overrides?.liveTrading ?? liveTrading,
+    executor,
   };
 }

@@ -1,5 +1,5 @@
 {
-  "name": "btc-updown-jev",
+  "name": "polymarket-btc5m-jev-trading",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -14,7 +14,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@polymarket/clob-client": "^4.22.8",
+    "@ethersproject/wallet": "^5.8.0",
+    "@polymarket/client": "^0.10.0",
+    "@polymarket/clob-client": "^5.8.1",
+    "@polymarket/clob-client-v2": "^1.1.0",
     "@typesafe-ai/sdk": "^0.6.0",
     "ethers": "5.8.0",
     "ink": "^5.2.1",

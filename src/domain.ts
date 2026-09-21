@@ -1,8 +1,8 @@
 export type Confidence = number & { readonly __brand: "Confidence" };
 
 /**
- * Confidence strictly greater than the session threshold (default 0.70).
- * Only constructible via gate(); ENTER/HOLD/SWITCH require this brand.
+ * Confidence strictly greater than the session threshold (default 0.90).
+ * Only constructible via gate(); ENTER requires this brand.
  */
 export type HighConfidence = Confidence & { readonly __high: "HighConfidence" };
 
@@ -106,6 +106,16 @@ export type IntendedOrder = {
 
 export type AbstainReason =
   | { code: "LOW_CONFIDENCE"; side: Side; confidence: Confidence }
+  | {
+      code: "NO_EDGE";
+      side: Side;
+      pWin: number;
+      ask: number;
+      need: number;
+    }
+  | { code: "TOO_LATE"; detail: string }
+  | { code: "COOLDOWN"; detail: string }
+  | { code: "MAX_TRADES"; detail: string }
   | { code: "WORLD_INCOMPLETE"; missing: ReadonlyArray<"market" | "spot"> }
   | { code: "JUDGE_FAILED"; message: string }
   | { code: "MARKET_UNAVAILABLE"; message: string }
@@ -115,13 +125,14 @@ export type AbstainReason =
 
 export type TradeAction =
   | { kind: "ABSTAIN"; reason: AbstainReason }
-  | { kind: "ENTER"; side: Side; confidence: HighConfidence; order: IntendedOrder }
-  | { kind: "HOLD"; side: Side; confidence: HighConfidence }
+  | { kind: "ENTER"; side: Side; confidence: HighConfidence; order: IntendedOrder; why: string }
+  | { kind: "HOLD"; side: Side; confidence: Confidence; why: string }
   | {
       kind: "EXIT";
       side: Side;
       order: IntendedOrder;
-      reason: "low_confidence" | "window_end" | "switch";
+      reason: "confidence_floor" | "window_end" | "switch";
+      why: string;
     }
   | {
       kind: "SWITCH";
@@ -130,6 +141,7 @@ export type TradeAction =
       confidence: HighConfidence;
       exit: IntendedOrder;
       enter: IntendedOrder;
+      why: string;
     };
 
 export type PnLRecord = {
@@ -141,7 +153,22 @@ export type PnLRecord = {
   exitPrice: number | null;
   size: number;
   pnlUsd: number;
-  mode: "dry-run";
+  mode: "dry-run" | "live";
+  reason:
+    | "exit"
+    | "switch"
+    | "window_end"
+    | "settle"
+    | "take_profit"
+    | "confidence_floor";
+};
+
+export type QuoteSlice = {
+  mid: number;
+  bid: number | null;
+  ask: number | null;
+  spread: number | null;
+  lastTrade: number | null;
 };
 
 export type FactsForJev = {
@@ -150,8 +177,8 @@ export type FactsForJev = {
     question: string;
     endsAt: string | null;
     volume24hUsd: number;
-    up: { mid: number; spread: number | null; lastTrade: number | null };
-    down: { mid: number; spread: number | null; lastTrade: number | null };
+    up: QuoteSlice;
+    down: QuoteSlice;
   };
   btc: {
     last: number;
@@ -160,11 +187,23 @@ export type FactsForJev = {
     low24h: number;
     volume24hQuote: number;
     moveVsWindowOpenPct: number;
+    windowOpen: number | null;
   };
   session: {
     secondsRemaining: number | null;
     windowLengthSec: number;
-    position: { kind: "flat" } | { kind: "open"; side: Side };
+    position:
+      | { kind: "flat" }
+      | {
+          kind: "open";
+          side: Side;
+          size: number;
+          entryPrice: number;
+          mark: number;
+          uPnLUsd: number;
+          uPnLPct: number;
+          inProfit: boolean;
+        };
   };
   meta: {
     marketSource: "live" | "fixture" | "stub";
@@ -181,6 +220,8 @@ export type JudgeOpinion = {
 
 export interface MarketSource {
   pullActiveBtcUpDown(): Promise<Sample<DomainMarket>>;
+  /** Optional: fetch a specific slug (for settle after rollover). */
+  pullBySlug?(slug: string): Promise<Sample<DomainMarket>>;
 }
 
 export interface SpotSource {
@@ -197,18 +238,38 @@ export interface DryRunPen {
   tail?(limit?: number): ReadonlyArray<IntendedOrder>;
 }
 
+export type OrderExecutor = {
+  apply(
+    position: Position,
+    action: TradeAction,
+    market: DomainMarket,
+    at: IsoTime,
+  ): Promise<{ position: Position; orders: IntendedOrder[] }>;
+};
+
 export type SessionConfig = {
   polymarket: MarketSource;
   spot: SpotSource;
   judge: Judge;
   pen: DryRunPen;
+  /** ENTER only when conf > this (default 0.90). */
   threshold: number;
-  dryRunSize: number;
+  /** Max USD notional per ENTER. */
+  betUsd: number;
+  /** Refuse ENTER if ask above this (default 0.70). */
+  maxAsk: number;
+  /** Require P(win) ≥ ask + minEdge (default 0.10). */
+  minEdge: number;
+  /** Abstain from new ENTER when fewer seconds remain (default 90). */
+  minSecondsToEnter: number;
+  /** Max ENTER actions per 5m window (default 1 — ride to end). */
+  maxEntersPerWindow: number;
   tickMs: number;
   staleAfterMs: number;
   windowLengthSec: number;
   pnlPath: string;
   liveTrading: boolean;
+  executor: OrderExecutor;
 };
 
 export type PnLSummary = {
@@ -229,15 +290,25 @@ export type TickSnapshot = {
     question: string;
     upMid: number;
     downMid: number;
+    upBid: number | null;
+    upAsk: number | null;
+    downBid: number | null;
+    downAsk: number | null;
+    upSpread: number | null;
+    downSpread: number | null;
     volume24hUsd: number;
     closed: boolean;
     active: boolean;
     source: Sample<DomainMarket>["source"];
+    conditionId: string;
   } | null;
   btc: {
     last: number;
     change24hPct: number;
+    high24h: number;
+    low24h: number;
     volume24hQuote: number;
+    moveVsWindowOpenPct: number;
     source: Sample<SpotPulse>["source"];
   } | null;
   health: {
@@ -250,4 +321,28 @@ export type TickSnapshot = {
   intentLogTail: ReadonlyArray<IntendedOrder>;
   lastPnL: PnLRecord | null;
   cumulativePnLUsd: number;
+  /** Mark-to-market on open position (bid), null when flat. */
+  unrealizedPnLUsd: number | null;
+  /** Ring of recent policy decisions (newest last). */
+  decisionLog: ReadonlyArray<{
+    at: IsoTime;
+    tickId: number;
+    kind: string;
+    summary: string;
+    conf?: number;
+    side?: Side;
+  }>;
+  /** Ring of recent API / tool activity (newest last). */
+  activityLog: ReadonlyArray<{
+    at: IsoTime;
+    channel: string;
+    op: string;
+    detail: string;
+    ms?: number;
+    ok: boolean;
+  }>;
+  /** Session tick interval (for next-decision countdown). */
+  tickMs: number;
+  /** Pit-trader one-liner for this tick. */
+  voice: string;
 };

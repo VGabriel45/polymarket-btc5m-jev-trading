@@ -7,6 +7,16 @@ import {
   type Side,
 } from "../../domain.js";
 
+const DIRECTION_Q = [
+  "This is a Polymarket BTC Up/Down 5-minute contract.",
+  "Resolution is Chainlink BTC/USD TWAP vs Price to Beat (window open), not Binance spot and not share odds.",
+  "UP wins if close TWAP >= open reference. DOWN otherwise. Winning shares pay $1, losers $0.",
+  "Return calibrated P(UP) and P(DOWN) for THIS window using seconds remaining and btc.moveVsWindowOpenPct.",
+  "If session.position.kind is open, judge whether THAT side still resolves winner.",
+  "Market mids are trader opinions, not the oracle. Prefer BTC path vs open over 24h change.",
+  "Treat UP and DOWN symmetrically.",
+].join(" ");
+
 export function typeSafeJudge(opts: {
   apiKey: string;
   model: "jev-1.13.0";
@@ -22,13 +32,10 @@ export function typeSafeJudge(opts: {
         state: facts as unknown as EntryType,
         model: opts.model,
         questions: {
-          direction: choice(
-            "Given this BTC Up/Down Polymarket window and spot pulse, which outcome is more likely?",
-            {
-              UP: "Bitcoin finishes UP vs the window open",
-              DOWN: "Bitcoin finishes DOWN vs the window open",
-            },
-          ),
+          direction: choice(DIRECTION_Q, {
+            UP: "Bitcoin finishes UP vs the window open",
+            DOWN: "Bitcoin finishes DOWN vs the window open",
+          }),
         },
       });
 

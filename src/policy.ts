@@ -30,15 +30,24 @@ export function buildIdempotencyKey(args: {
   return `${args.side}:${args.tokenId}:${args.outcome}:${args.size}:${priceBand(args.price)}`;
 }
 
+/**
+ * Share count for a USD budget at `price`. Floors to 2dp so size×price ≤ usd.
+ */
+export function sizeSharesForUsd(usd: number, price: number): number {
+  if (!(usd > 0) || !(price > 0)) return 0;
+  return Math.floor((usd / price) * 100) / 100;
+}
+
 function buyOrder(
   market: DomainMarket,
   outcome: Side,
-  size: number,
+  betUsd: number,
   at: IsoTime,
   rationale: string,
 ): IntendedOrder {
   const quote = market.bySide[outcome];
   const price = quote.bestAsk ?? quote.mid;
+  const size = sizeSharesForUsd(betUsd, price);
   return {
     side: "BUY",
     tokenId: quote.tokenId,
@@ -65,7 +74,7 @@ function sellOrder(
   rationale: string,
 ): IntendedOrder {
   const quote = market.bySide[outcome];
-  const price = quote.bestBid ?? quote.mid;
+  const price = markBid(market, outcome);
   return {
     side: "SELL",
     tokenId: quote.tokenId,
@@ -84,84 +93,157 @@ function sellOrder(
   };
 }
 
+/** Mark price for exiting a side. Ignore stub wing bids far from mid. */
+export function markBid(market: DomainMarket, side: Side): number {
+  const q = market.bySide[side];
+  const gamma = market.outcomePrices?.[side];
+  if (
+    q.bestBid != null &&
+    Number.isFinite(q.bestBid) &&
+    Math.abs(q.bestBid - q.mid) <= 0.25
+  ) {
+    return q.bestBid;
+  }
+  if (q.lastTrade != null && Number.isFinite(q.lastTrade)) return q.lastTrade;
+  if (gamma != null && Number.isFinite(gamma)) return gamma;
+  return q.mid;
+}
+
+export type PlanTradeOpts = {
+  /** ENTER only when conf > this (default 0.90). */
+  threshold: number;
+  betUsd: number;
+  /** Refuse ENTER when ask > maxAsk (default 0.70). */
+  maxAsk: number;
+  /** Require P(win) ≥ ask + minEdge (default 0.10). */
+  minEdge: number;
+  /** No new ENTER when seconds left < this (default 90). */
+  minSecondsToEnter: number;
+  /** Window seconds remaining; null unknown. */
+  secondsRemaining: number | null;
+  maxEntersPerWindow: number;
+  entersThisWindow: number;
+};
+
+/** P that the held (or named) side wins the window, from Jev probs or choice. */
+export function heldWinProb(opinion: JudgeOpinion, side: Side): number {
+  const fromProbs = opinion.probs?.[side];
+  if (fromProbs != null && Number.isFinite(fromProbs)) return fromProbs;
+  return opinion.side === side ? opinion.confidence : 1 - opinion.confidence;
+}
+
 /**
- * App-owned trade policy. Jev only supplies side + confidence; side-effects stay here.
+ * Ride-to-resolution policy.
+ *
+ * Flat: ENTER once when conf > threshold, ask ≤ maxAsk, P(win) ≥ ask+minEdge,
+ * and enough time left. Open: HOLD until settle — no mid-window sell/flip.
  */
 export function planTrade(
   position: Position,
   opinion: JudgeOpinion,
-  threshold: number,
   market: DomainMarket,
-  size: number,
   at: IsoTime,
+  opts: PlanTradeOpts,
 ): TradeAction {
+  const {
+    threshold,
+    betUsd,
+    maxAsk,
+    minEdge,
+    minSecondsToEnter,
+    secondsRemaining,
+    maxEntersPerWindow,
+    entersThisWindow,
+  } = opts;
   const hi = gate(opinion.confidence, threshold);
 
-  if (position.kind === "flat") {
-    if (!hi) {
-      return {
-        kind: "ABSTAIN",
-        reason: {
-          code: "LOW_CONFIDENCE",
-          side: opinion.side,
-          confidence: opinion.confidence,
-        },
-      };
-    }
+  if (position.kind === "open") {
+    const mark = markBid(market, position.side);
+    const edge = mark - position.entryPrice;
+    const uPnL = position.size * edge;
+    const pHeld = heldWinProb(opinion, position.side);
+    const why = `HOLD ${position.side} to resolution · Jev conf ${opinion.confidence.toFixed(3)} P(held)=${pHeld.toFixed(3)} · mark ${mark.toFixed(3)} entry ${position.entryPrice.toFixed(3)} uPnL $${uPnL.toFixed(2)}`;
     return {
-      kind: "ENTER",
-      side: opinion.side,
-      confidence: hi,
-      order: buyOrder(
-        market,
-        opinion.side,
-        size,
-        at,
-        `ENTER ${opinion.side} @ conf ${opinion.confidence.toFixed(3)} > ${threshold}`,
-      ),
+      kind: "HOLD",
+      side: position.side,
+      confidence: opinion.confidence,
+      why,
     };
   }
 
   if (!hi) {
     return {
-      kind: "EXIT",
-      side: position.side,
-      reason: "low_confidence",
-      order: sellOrder(
-        market,
-        position.side,
-        position.size,
-        at,
-        `EXIT ${position.side} low conf ${opinion.confidence.toFixed(3)} ≤ ${threshold}`,
-      ),
+      kind: "ABSTAIN",
+      reason: {
+        code: "LOW_CONFIDENCE",
+        side: opinion.side,
+        confidence: opinion.confidence,
+      },
     };
   }
 
-  if (opinion.side === position.side) {
-    return { kind: "HOLD", side: position.side, confidence: hi };
+  if (entersThisWindow >= maxEntersPerWindow) {
+    return {
+      kind: "ABSTAIN",
+      reason: {
+        code: "MAX_TRADES",
+        detail: `already entered this window (${entersThisWindow}/${maxEntersPerWindow}) — ride only`,
+      },
+    };
   }
 
-  const exit = sellOrder(
-    market,
-    position.side,
-    position.size,
-    at,
-    `SWITCH exit ${position.side}`,
-  );
-  const enter = buyOrder(
-    market,
-    opinion.side,
-    size,
-    at,
-    `SWITCH enter ${opinion.side} @ conf ${opinion.confidence.toFixed(3)}`,
-  );
+  if (
+    secondsRemaining != null &&
+    secondsRemaining < minSecondsToEnter
+  ) {
+    return {
+      kind: "ABSTAIN",
+      reason: {
+        code: "TOO_LATE",
+        detail: `${secondsRemaining}s left < ${minSecondsToEnter}s enter cutoff — book already prices the outcome`,
+      },
+    };
+  }
+
+  const ask =
+    market.bySide[opinion.side].bestAsk ?? market.bySide[opinion.side].mid;
+  const pWin = heldWinProb(opinion, opinion.side);
+  const need = ask + minEdge;
+
+  if (ask > maxAsk) {
+    return {
+      kind: "ABSTAIN",
+      reason: {
+        code: "NO_EDGE",
+        side: opinion.side,
+        pWin,
+        ask,
+        need: maxAsk,
+      },
+    };
+  }
+
+  // Fair EV needs P(win) above ask by minEdge. Conf alone is not edge.
+  if (!(pWin >= need)) {
+    return {
+      kind: "ABSTAIN",
+      reason: {
+        code: "NO_EDGE",
+        side: opinion.side,
+        pWin,
+        ask,
+        need,
+      },
+    };
+  }
+
+  const why = `ENTER ${opinion.side}: P=${pWin.toFixed(3)} vs ask ${ask.toFixed(3)} (edge ${(pWin - ask).toFixed(3)}) · conf ${opinion.confidence.toFixed(3)} · ride ≤$${betUsd}`;
   return {
-    kind: "SWITCH",
-    from: position.side,
-    to: opinion.side,
+    kind: "ENTER",
+    side: opinion.side,
     confidence: hi,
-    exit,
-    enter,
+    why,
+    order: buyOrder(market, opinion.side, betUsd, at, why),
   };
 }
 
@@ -171,16 +253,13 @@ export function planWindowEndExit(
   market: DomainMarket,
   at: IsoTime,
 ): TradeAction {
+  const mark = markBid(market, position.side);
+  const why = `WINDOW END: force sell ${position.side} @ bid ${mark.toFixed(3)}`;
   return {
     kind: "EXIT",
     side: position.side,
     reason: "window_end",
-    order: sellOrder(
-      market,
-      position.side,
-      position.size,
-      at,
-      `EXIT ${position.side} window_end`,
-    ),
+    why,
+    order: sellOrder(market, position.side, position.size, at, why),
   };
 }

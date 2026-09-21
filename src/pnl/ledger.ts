@@ -52,7 +52,7 @@ export async function readSummary(
   };
 }
 
-/** Binary settle: winner shares ≈ $1, loser ≈ $0. */
+/** Binary settle: winner shares ≈ $1, loser ≈ $0. Early exit uses exitPrice. */
 export function settlePnLUsd(args: {
   positionSide: string | null;
   winner: string | null;
@@ -69,4 +69,24 @@ export function settlePnLUsd(args: {
   if (args.winner == null) return 0;
   const settlePrice = args.positionSide === args.winner ? 1 : 0;
   return args.size * (settlePrice - args.entryPrice);
+}
+
+/** Mark open shares to best bid (fallback mid). */
+export function markUnrealizedUsd(
+  position: { kind: "flat" } | { kind: "open"; side: string; size: number; entryPrice: number },
+  market: {
+    bySide: Record<
+      string,
+      { bestBid: number | null; mid: number }
+    >;
+  } | null,
+): number | null {
+  if (position.kind !== "open" || !market) return null;
+  const q = market.bySide[position.side];
+  if (!q) return null;
+  const mark =
+    q.bestBid != null && Math.abs(q.bestBid - q.mid) <= 0.25
+      ? q.bestBid
+      : q.mid;
+  return position.size * (mark - position.entryPrice);
 }

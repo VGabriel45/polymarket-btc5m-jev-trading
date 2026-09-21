@@ -25,7 +25,7 @@ export function fixedSpotSource(input: FixedSpotInput): SpotSource {
         high24h: input.high24h ?? input.last * 1.02,
         low24h: input.low24h ?? input.last * 0.98,
         volume24hQuote: input.volume24h,
-        moveVsWindowOpenPct: input.moveVsWindowOpenPct ?? input.change24hPct,
+        moveVsWindowOpenPct: input.moveVsWindowOpenPct ?? 0,
       };
       const pulledAt = nowIso();
       return {
