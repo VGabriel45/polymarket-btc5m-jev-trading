@@ -19,7 +19,7 @@ src/
       live.ts             # klines + ticker → SpotPulse (wire dies here)
       fixed.ts            # test/fixture spot
     jev/
-      typesafe.ts         # TypeSafeClient.systemOne → JudgeOpinion
+      typesafe.ts         # TypeSafeClient.systemOne (TypeSafe or OpenRouter) → JudgeOpinion
       stub.ts             # --stub-judge / tests only
   dryrun/
     log-pen.ts            # console/file intended BUY; idempotent debounce

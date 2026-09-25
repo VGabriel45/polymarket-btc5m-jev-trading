@@ -9,7 +9,7 @@ It watches the live 5m window, asks [TypeSafe Jev](https://typesafe.ai) whether 
 ## Requirements
 
 - Node.js 20+
-- A TypeSafe API key (`TYPESAFE_API_KEY`)
+- A Jev API key: either TypeSafe (`TYPESAFE_API_KEY`) or OpenRouter (`OPENROUTER_API_KEY`)
 
 For live trading only: a Polygon wallet that already works on [Polymarket](https://polymarket.com) (connected, funded with USDC.e, able to trade in the browser). This project does **not** set allowances or deposits for you.
 
@@ -24,11 +24,18 @@ cp .env.example .env
 npm install
 ```
 
-Edit `.env` and set:
+Edit `.env` and set **one** of:
 
 ```bash
+# TypeSafe direct
 TYPESAFE_API_KEY=your_key_here
+
+# or OpenRouter (model typesafe/jev-1.13, billed to your OpenRouter credits)
+JEV_PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-...
 ```
+
+On OpenRouter the TypeSafe SDK is pointed at `https://openrouter.ai/api` (`POST /v1/systemone`); the request and response shapes are the same.
 
 ---
 
@@ -46,7 +53,13 @@ One-shot tick (JSON to stdout):
 npm run once
 ```
 
-Offline without a TypeSafe key:
+If Binance blocks your region (HTTP 451 on spot), add `--fixed-spot` to pin BTC spot while still calling Jev and live Polymarket:
+
+```bash
+npm run once -- --fixed-spot
+```
+
+Offline without a Jev key:
 
 ```bash
 POLYMARKET_SOURCE=fixture npm run watch -- --stub-judge
@@ -103,7 +116,10 @@ Winners are decided by Polymarket’s rules (Chainlink BTC TWAP vs price to beat
 
 | Var | Default | What it does |
 |-----|---------|--------------|
-| `TYPESAFE_API_KEY` | — | Jev API key |
+| `JEV_PROVIDER` | auto | `typesafe` or `openrouter` (auto: `openrouter` when only `OPENROUTER_API_KEY` is set) |
+| `TYPESAFE_API_KEY` | — | Jev key for `typesafe` |
+| `OPENROUTER_API_KEY` | — | Jev key for `openrouter` |
+| `JEV_MODEL` | `jev-1.13.0` / `typesafe/jev-1.13` | Model override for the chosen provider |
 | `POLYMARKET_SOURCE` | `auto` | `live`, `fixture`, or `auto` |
 | `TICK_MS` | `5000` | Seconds between ticks (ms) |
 | `ACT_THRESHOLD` | `0.90` | Min confidence to enter (must be **strictly greater**) |

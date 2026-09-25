@@ -4,7 +4,7 @@ import { fixtureMarketSource } from "./adapters/polymarket/fixture.js";
 import { liveMarketSource } from "./adapters/polymarket/live.js";
 import { binanceSpotSource } from "./adapters/binance/live.js";
 import { fixedSpotSource } from "./adapters/binance/fixed.js";
-import { typeSafeJudge } from "./adapters/jev/typesafe.js";
+import { typeSafeJudge, type JevProvider } from "./adapters/jev/typesafe.js";
 import { stubJudge } from "./adapters/jev/stub.js";
 import { applyDry } from "./broker/dry.js";
 import { LiveBroker } from "./broker/live.js";
@@ -20,6 +20,9 @@ import type {
 
 export type EnvBag = {
   TYPESAFE_API_KEY?: string;
+  OPENROUTER_API_KEY?: string;
+  JEV_PROVIDER?: string;
+  JEV_MODEL?: string;
   POLYMARKET_SOURCE?: string;
   BTC_UPDOWN_SLUG?: string;
   TICK_MS?: string;
@@ -61,6 +64,19 @@ function marketFromEnv(env: EnvBag, fixturePath: string): MarketSource {
   return autoMarketSource({ slugOverride, fixturePath });
 }
 
+/** Explicit JEV_PROVIDER wins; otherwise OpenRouter only when it is the sole key set. */
+function jevProviderFromEnv(env: EnvBag): JevProvider {
+  const raw = env.JEV_PROVIDER?.trim().toLowerCase();
+  if (raw === "typesafe" || raw === "openrouter") return raw;
+  if (raw) {
+    throw new Error(`JEV_PROVIDER must be typesafe or openrouter, got ${raw}`);
+  }
+  if (!env.TYPESAFE_API_KEY?.trim() && env.OPENROUTER_API_KEY?.trim()) {
+    return "openrouter";
+  }
+  return "typesafe";
+}
+
 function dryExecutor(): OrderExecutor {
   return {
     async apply(position, action, market, at) {
@@ -70,7 +86,7 @@ function dryExecutor(): OrderExecutor {
 }
 
 /**
- * Build SessionConfig from env. Fail-loud if TYPESAFE_API_KEY missing unless stub.
+ * Build SessionConfig from env. Fail-loud if the Jev provider key is missing unless stub.
  * LIVE_TRADING=1 posts via deposit-wallet CLOB v2 (POLY_1271).
  */
 export function loadConfig(
@@ -117,13 +133,20 @@ export function loadConfig(
         confidence: opts.stubConfidence ?? 0.91,
       });
   } else {
-    const apiKey = e.TYPESAFE_API_KEY?.trim();
+    const provider = jevProviderFromEnv(e);
+    const keyEnv =
+      provider === "openrouter" ? "OPENROUTER_API_KEY" : "TYPESAFE_API_KEY";
+    const apiKey = e[keyEnv]?.trim();
     if (!apiKey) {
       throw new Error(
-        "TYPESAFE_API_KEY is required (or pass --stub-judge for offline smoke)",
+        `${keyEnv} is required for JEV_PROVIDER=${provider} (or pass --stub-judge for offline smoke)`,
       );
     }
-    judge = typeSafeJudge({ apiKey, model: "jev-1.13.0" });
+    judge = typeSafeJudge({
+      apiKey,
+      provider,
+      model: e.JEV_MODEL?.trim() || undefined,
+    });
   }
 
   if (opts.overrides?.spot) {
