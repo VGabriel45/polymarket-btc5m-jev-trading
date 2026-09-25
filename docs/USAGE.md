@@ -6,7 +6,7 @@ Dry-run by default. Live CLOB posting is opt-in via `LIVE_TRADING=1` (see root R
 
 ```bash
 # Node 20+
-cp .env.example .env   # TYPESAFE_API_KEY=...  (required unless --stub-judge)
+cp .env.example .env   # TYPESAFE_API_KEY=... or OPENROUTER_API_KEY=... (required unless --stub-judge)
 npm install
 npm run watch          # Ink TUI, live loop
 
@@ -24,7 +24,10 @@ Env knobs:
 
 | Var | Default | Meaning |
 |-----|---------|---------|
-| `TYPESAFE_API_KEY` | — | Required for real Jev; fail-loud if missing |
+| `JEV_PROVIDER` | auto | `typesafe` or `openrouter`; auto picks `openrouter` when only `OPENROUTER_API_KEY` is set |
+| `TYPESAFE_API_KEY` | — | Jev key for `typesafe`; fail-loud if missing |
+| `OPENROUTER_API_KEY` | — | Jev key for `openrouter` (model `typesafe/jev-1.13`) |
+| `JEV_MODEL` | per provider | Model override |
 | `POLYMARKET_SOURCE` | `auto` | `live` \| `fixture` \| `auto` |
 | `BTC_UPDOWN_SLUG` | (series resolve) | Optional Gamma event slug override |
 | `TICK_MS` | `15000` | Loop interval |
@@ -58,7 +61,7 @@ import { WatchSession } from "../session.js";
 import { App } from "../tui/App.js";
 import { loadConfig } from "../config.js";
 
-const cfg = loadConfig(process.env); // throws if TYPESAFE_API_KEY missing (unless stub)
+const cfg = loadConfig(process.env); // throws if the Jev provider key is missing (unless stub)
 
 const session = await WatchSession.open(cfg);
 // open() wires: MarketSource (live|fixture|auto), BinanceSpot, TypeSafeJudge, DryRunPen

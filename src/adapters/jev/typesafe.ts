@@ -17,20 +17,45 @@ const DIRECTION_Q = [
   "Treat UP and DOWN symmetrically.",
 ].join(" ");
 
+/** TypeSafe direct, or OpenRouter's System One endpoint (same wire format). */
+export type JevProvider = "typesafe" | "openrouter";
+
+export const JEV_PROVIDERS: Record<
+  JevProvider,
+  { baseURL: string; defaultModel: string; keyEnv: string }
+> = {
+  typesafe: {
+    baseURL: "https://api.typesafe.ai",
+    defaultModel: "jev-1.13.0",
+    keyEnv: "TYPESAFE_API_KEY",
+  },
+  openrouter: {
+    baseURL: "https://openrouter.ai/api",
+    defaultModel: "typesafe/jev-1.13",
+    keyEnv: "OPENROUTER_API_KEY",
+  },
+};
+
 export function typeSafeJudge(opts: {
   apiKey: string;
-  model: "jev-1.13.0";
+  provider?: JevProvider;
+  model?: string;
 }): Judge {
+  const provider = JEV_PROVIDERS[opts.provider ?? "typesafe"];
   if (!opts.apiKey) {
-    throw new Error("TYPESAFE_API_KEY missing — refuse silent stub");
+    throw new Error(`${provider.keyEnv} missing — refuse silent stub`);
   }
-  const client = new TypeSafeClient({ apiKey: opts.apiKey });
+  const model = opts.model ?? provider.defaultModel;
+  const client = new TypeSafeClient({
+    apiKey: opts.apiKey,
+    baseURL: provider.baseURL,
+  });
 
   return {
     async ask(facts: FactsForJev): Promise<JudgeOpinion> {
       const result = await client.systemOne({
         state: facts as unknown as EntryType,
-        model: opts.model,
+        model,
         questions: {
           direction: choice(DIRECTION_Q, {
             UP: "Bitcoin finishes UP vs the window open",
